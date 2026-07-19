@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="mr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>सभासद पोर्टल — पतसंस्था</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Devanagari:wght@400;600;700&family=Tiro+Devanagari+Marathi&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.js"></script>
+<style>
+  :root{ --navy:#1B2A4A; --gold:#C99A2E; --cream:#F7F5F0; --green:#2F6F4E; --rust:#B54834; --slate:#33363D; --border:#E3DFD5; --card:#FFFFFF; }
+  *{box-sizing:border-box;}
+  body{ margin:0; font-family:'Noto Sans Devanagari', sans-serif; background:var(--cream); color:var(--slate); min-height:100vh; }
+  h1,h2,h3{ font-family:'Tiro Devanagari Marathi', serif; }
+  .wrap{ max-width:480px; margin:0 auto; min-height:100vh; background:var(--card); box-shadow:0 0 24px rgba(0,0,0,.06); }
+  .head{ background:var(--navy); color:#fff; padding:18px 20px; display:flex; align-items:center; gap:10px; position:sticky; top:0; z-index:5; }
+  .seal{ width:34px;height:34px;border-radius:50%; background:radial-gradient(circle at 30% 30%, var(--gold), #8f701f); display:flex;align-items:center;justify-content:center; font-weight:700; color:var(--navy); font-size:16px; flex-shrink:0; }
+  .head h1{ font-size:17px; margin:0; }
+  .head small{ display:block; font-size:11px; opacity:.7; font-family:'Noto Sans Devanagari'; }
+  .head .logout{ margin-left:auto; background:none; border:1px solid rgba(255,255,255,.4); color:#fff; padding:5px 10px; border-radius:6px; font-size:12px; cursor:pointer; }
+  .content{ padding:20px; }
+  .card{ background:#fff; border:1px solid var(--border); border-radius:10px; padding:16px; margin-bottom:14px; }
+  .field{ margin-bottom:14px; }
+  .field label{ display:block; font-size:12.5px; color:#666; margin-bottom:5px; }
+  .field input{ width:100%; padding:11px 12px; border:1px solid #d8d8d8; border-radius:8px; font-size:16px; box-sizing:border-box; }
+  .btn{ width:100%; padding:12px; border:none; border-radius:8px; background:var(--navy); color:#fff; font-size:15px; font-weight:600; cursor:pointer; }
+  .btn:disabled{ opacity:.6; }
+  .btn.gold{ background:var(--gold); color:var(--navy); }
+  .btn.ghost{ background:none; border:1px solid var(--border); color:var(--navy); }
+  .link-btn{ background:none; border:none; color:var(--navy); text-decoration:underline; font-size:13px; cursor:pointer; padding:0; margin-top:10px; display:block; text-align:center; width:100%; }
+  .err{ color:#b23b3b; font-size:12.5px; margin-top:8px; min-height:16px; }
+  .ok{ color:var(--green); font-size:12.5px; margin-top:8px; }
+  .stat{ text-align:center; padding:14px 0; }
+  .stat .num{ font-size:22px; font-weight:700; color:var(--navy); }
+  .stat .lbl{ font-size:12px; color:#8a8676; }
+  .acc-row{ display:flex; justify-content:space-between; align-items:center; padding:12px 0; border-bottom:1px solid var(--border); }
+  .acc-row:last-child{ border-bottom:none; }
+  .acc-row .no{ font-weight:600; font-size:14px; }
+  .acc-row .type{ font-size:11.5px; color:#8a8676; }
+  .acc-row .bal{ font-weight:700; color:var(--navy); font-size:15px; }
+  .txn-row{ display:flex; justify-content:space-between; padding:9px 0; border-bottom:1px solid var(--border); font-size:13px; }
+  .txn-row:last-child{ border-bottom:none; }
+  .txn-row .c{ color:var(--green); font-weight:600; }
+  .txn-row .d{ color:var(--rust); font-weight:600; }
+  .empty{ text-align:center; color:#999; padding:30px 0; font-size:13.5px; }
+  .hidden{ display:none; }
+  .tabbar{ display:flex; border-top:1px solid var(--border); position:sticky; bottom:0; background:#fff; }
+  .tabbar button{ flex:1; border:none; background:none; padding:10px 0; font-size:12px; color:#8a8676; cursor:pointer; }
+  .tabbar button.active{ color:var(--navy); font-weight:700; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <div class="seal">प</div>
+    <div><h1>सभासद पोर्टल</h1><small>पतसंस्था ERP</small></div>
+    <button class="logout hidden" id="logout-btn">लॉगआउट</button>
+  </div>
+  <div class="content" id="content">
+    <div class="empty">लोड होत आहे...</div>
+  </div>
+  <div class="tabbar hidden" id="tabbar">
+    <button data-tab="dashboard" class="active">🏠 मुख्यपृष्ठ</button>
+    <button data-tab="send">💸 पैसे पाठवा</button>
+    <button data-tab="myqr" id="tab-myqr">📱 माझा QR</button>
+  </div>
+</div>
+
+<script>
+const SUPABASE_URL = 'https://temhjrgowrzigdnvijkl.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRlbWhqcmdvd3J6aWdkbnZpamtsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODM0Mzk0ODIsImV4cCI6MjA5OTAxNTQ4Mn0.Yv80XtocxepssWTp0mtTTyfdvoNiSwv2ofvGjU6PmxU';
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const c = document.getElementById('content');
+const logoutBtn = document.getElementById('logout-btn');
+let CURRENT_MEMBER = null;
+
+function synthEmail(memberNo){ return `m${memberNo}@patsanstha.internal`; }
+function fmtMoney(n){ return '₹' + Number(n||0).toLocaleString('en-IN', {maximumFractionDigits:2}); }
+
+logoutBtn.addEventListener('click', async () => {
+  await sb.auth.signOut();
+  CURRENT_MEMBER = null;
+  logoutBtn.classList.add('hidden');
+  document.getElementById('tabbar').classList.add('hidden');
+  renderLogin();
+});
+
+/* ---------- लॉगिन स्क्रीन — मोबाईल नंबर वापरून ---------- */
+function renderLogin(err){
+  c.innerHTML = `
+    <div class="card">
+      <h2 style="text-align:center;margin-top:0;">लॉगिन करा</h2>
+      <div class="field"><label>मोबाईल क्रमांक</label><input id="li-mobile" inputmode="numeric" maxlength="10" placeholder="10 अंकी मोबाईल"></div>
+      <button class="btn" id="li-find-btn">पुढे जा</button>
+      <div class="err">${err||''}</div>
+    </div>
+    <button class="link-btn" id="go-register">नवीन सभासद? इथे नोंदणी करा</button>
+  `;
+  document.getElementById('li-find-btn').addEventListener('click', findMemberByMobile);
+  document.getElementById('go-register').addEventListener('click', () => renderRegisterStep1());
+}
+
+async function findMemberByMobile(){
+  const btn = document.getElementById('li-find-btn');
+  const mobile = document.getElementById('li-mobile').value.trim();
+  if (!mobile || mobile.length < 10){ renderLogin('कृपया बरोबर १० अंकी मोबाईल क्रमांक टाका.'); return; }
+  btn.disabled = true; btn.textContent = 'शोधत आहे...';
+  const { data, error } = await sb.rpc('find_members_by_mobile', { p_mobile: mobile });
+  if (error || !data || !data.length){
+    renderLogin('या मोबाईल क्रमांकावर नोंदणीकृत सभासद सापडला नाही. आधी नोंदणी केली आहे का तपासा, किंवा खाली नोंदणी करा.');
+    return;
+  }
+  if (data.length === 1){ renderPinStep(data[0]); return; }
+  // एकाच मोबाईलवर अनेक सभासद — निवडायला द्या
+  c.innerHTML = `
+    <div class="card">
+      <h2 style="text-align:center;margin-top:0;">कोणते सभासद?</h2>
+      <p style="font-size:12.5px;color:#777;text-align:center;">या मोबाईल क्रमांकावर एकापेक्षा जास्त सभासद नोंदणीकृत आहेत — तुमचं नाव निवडा.</p>
+      ${data.map(m => `<button class="btn ghost" style="margin-bottom:8px;" data-id="${m.id}" data-no="${m.member_no}" data-name="${m.name}">${m.name} (सभासद क्र: ${m.member_no})</button>`).join('')}
+    </div>
+    <button class="link-btn" id="go-back">‹ मागे</button>
+  `;
+  document.querySelectorAll('button[data-id]').forEach(b => b.addEventListener('click', () => {
+    renderPinStep({ id:b.dataset.id, member_no:b.dataset.no, name:b.dataset.name });
+  }));
+  document.getElementById('go-back').addEventListener('click', () => renderLogin());
+}
+
+function renderPinStep(member){
+  c.innerHTML = `
+    <div class="card">
+      <h2 style="text-align:center;margin-top:0;">नमस्कार, ${member.name}</h2>
+      <div class="field"><label>PIN</label><input id="li-pin" type="password" inputmode="numeric" maxlength="6" placeholder="4-6 अंकी PIN" autofocus></div>
+      <button class="btn" id="li-btn">लॉगिन करा</button>
+      <div class="err" id="li-pin-err"></div>
+    </div>
+    <button class="link-btn" id="go-back">‹ मागे</button>
+  `;
+  document.getElementById('go-back').addEventListener('click', () => renderLogin());
+  document.getElementById('li-btn').addEventListener('click', () => doLogin(member));
+}
+
+async function doLogin(member){
+  const btn = document.getElementById('li-btn');
+  const errEl = document.getElementById('li-pin-err');
+  const pin = document.getElementById('li-pin').value.trim();
+  if (!pin){ errEl.textContent = 'PIN टाका.'; return; }
+  btn.disabled = true; btn.textContent = 'तपासत आहे...';
+  const { data, error } = await sb.auth.signInWithPassword({ email: synthEmail(member.member_no), password: pin });
+  if (error){ errEl.textContent = 'चुकीचा PIN.'; btn.disabled=false; btn.textContent='लॉगिन करा'; return; }
+  await loadMemberAndShowDashboard();
+}
+
+/* ---------- नोंदणी — पायरी १: सभासद क्र + मोबाईल पडताळणी ---------- */
+function renderRegisterStep1(err){
+  c.innerHTML = `
+    <div class="card">
+      <h2 style="text-align:center;margin-top:0;">नवीन नोंदणी</h2>
+      <p style="font-size:12.5px;color:#777;text-align:center;">सभासद क्रमांक व नोंदणीकृत मोबाईल क्रमांक टाका — पडताळणीसाठी.</p>
+      <div class="field"><label>सभासद क्रमांक</label><input id="rg-no" placeholder="उदा. 290-51"></div>
+      <div class="field"><label>मोबाईल क्रमांक</label><input id="rg-mobile" inputmode="numeric" placeholder="10 अंकी मोबाईल"></div>
+      <button class="btn" id="rg-verify-btn">पडताळा</button>
+      <div class="err">${err||''}</div>
+    </div>
+    <button class="link-btn" id="go-login">आधीच नोंदणीकृत? लॉगिन करा</button>
+  `;
+  document.getElementById('go-login').addEventListener('click', () => renderLogin());
+  document.getElementById('rg-verify-btn').addEventListener('click', async () => {
+    const btn = document.getElementById('rg-verify-btn');
+    const no = document.getElementById('rg-no').value.trim();
+    const mobile = document.getElementById('rg-mobile').value.trim();
+    if (!no || !mobile){ renderRegisterStep1('दोन्ही फील्ड भरा.'); return; }
+    btn.disabled = true; btn.textContent = 'तपासत आहे...';
+    const { data, error } = await sb.from('members').select('id,member_no,name,mobile,auth_user_id')
+      .eq('member_no', no).eq('mobile', mobile).maybeSingle();
+    if (error || !data){ renderRegisterStep1('सभासद क्रमांक व मोबाईल जुळत नाही — कृपया शाखेत नोंदवलेलाच मोबाईल क्रमांक वापरा.'); return; }
+    if (data.auth_user_id){ renderRegisterStep1('या सभासदाची नोंदणी आधीच झालेली आहे — कृपया लॉगिन करा.'); return; }
+    renderRegisterStep2(data);
+  });
+}
+
+/* ---------- नोंदणी — पायरी २: PIN ठरवणे ---------- */
+function renderRegisterStep2(member){
+  c.innerHTML = `
+    <div class="card">
+      <h2 style="text-align:center;margin-top:0;">नमस्कार, ${member.name}</h2>
+      <p style="font-size:12.5px;color:#777;text-align:center;">आता स्वतःसाठी एक PIN ठरवा (पुढच्या वेळी लॉगिनसाठी वापराल).</p>
+      <div class="field"><label>नवीन PIN (4-6 अंकी)</label><input id="rg-pin1" type="password" inputmode="numeric" maxlength="6"></div>
+      <div class="field"><label>PIN पुन्हा टाका</label><input id="rg-pin2" type="password" inputmode="numeric" maxlength="6"></div>
+      <button class="btn gold" id="rg-final-btn">नोंदणी पूर्ण करा</button>
+      <div class="err" id="rg-err"></div>
+    </div>
+  `;
+  document.getElementById('rg-final-btn').addEventListener('click', async () => {
+    const btn = document.getElementById('rg-final-btn');
+    const errEl = document.getElementById('rg-err');
+    const pin1 = document.getElementById('rg-pin1').value.trim();
+    const pin2 = document.getElementById('rg-pin2').value.trim();
+    if (pin1.length < 4 || pin1.length > 6 || !/^\d+$/.test(pin1)){ errEl.textContent = 'PIN फक्त 4-6 अंकी असावा.'; return; }
+    if (pin1 !== pin2){ errEl.textContent = 'दोन्ही PIN जुळत नाहीत.'; return; }
+    btn.disabled = true; btn.textContent = 'नोंदणी होत आहे...';
+    const { data: signUpData, error: signUpErr } = await sb.auth.signUp({ email: synthEmail(member.member_no), password: pin1 });
+    if (signUpErr){ errEl.textContent = 'नोंदणी अयशस्वी: ' + signUpErr.message; btn.disabled=false; btn.textContent='नोंदणी पूर्ण करा'; return; }
+    // signUp नंतर लगेच सेशन मिळत नसेल (email confirmation चालू असल्यास) — म्हणून लगेच साइन-इन करून बघतो
+    let session = signUpData.session;
+    if (!session){
+      const { data: signInData } = await sb.auth.signInWithPassword({ email: synthEmail(member.member_no), password: pin1 });
+      session = signInData?.session;
+    }
+    if (!session){
+      errEl.innerHTML = 'खातं तयार झालं, पण लगेच लॉगिन होऊ शकलं नाही — Supabase Dashboard → Authentication → Settings मध्ये "Confirm email" पर्याय बंद आहे का तपासा.';
+      btn.disabled=false; btn.textContent='नोंदणी पूर्ण करा';
+      return;
+    }
+    const { error: updErr } = await sb.from('members').update({ auth_user_id: session.user.id }).eq('id', member.id);
+    if (updErr){ errEl.textContent = 'खातं तयार झालं, पण सभासदाशी जोडताना त्रुटी: ' + updErr.message; btn.disabled=false; btn.textContent='नोंदणी पूर्ण करा'; return; }
+    await loadMemberAndShowDashboard();
+  });
+}
+
+/* ---------- डॅशबोर्ड ---------- */
+async function loadMemberAndShowDashboard(){
+  c.innerHTML = '<div class="empty">लोड होत आहे...</div>';
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session){ renderLogin(); return; }
+  const { data: member, error } = await sb.from('members')
+    .select('id,member_no,name,mobile').eq('auth_user_id', session.user.id).maybeSingle();
+  if (error || !member){ renderLogin('खातं सापडलं नाही — पुन्हा नोंदणी करा किंवा शाखेशी संपर्क साधा.'); return; }
+  CURRENT_MEMBER = member;
+  logoutBtn.classList.remove('hidden');
+  document.getElementById('tabbar').classList.remove('hidden');
+  setActiveTab('dashboard');
+  renderDashboard();
+}
+
+document.getElementById('tabbar').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-tab]');
+  if (!btn) return;
+  stopQrScanner();
+  setActiveTab(btn.dataset.tab);
+  if (btn.dataset.tab === 'dashboard') renderDashboard();
+  else if (btn.dataset.tab === 'send') renderSendMoney();
+  else if (btn.dataset.tab === 'myqr') renderMyQR();
+});
+function setActiveTab(tab){
+  document.querySelectorAll('#tabbar button').forEach(b => b.classList.toggle('active', b.dataset.tab===tab));
+}
+
+async function renderDashboard(){
+  if (!CURRENT_MEMBER){ await loadMemberAndShowDashboard(); return; }
+  c.innerHTML = '<div class="empty">लोड होत आहे...</div>';
+  const { data: accounts } = await sb.from('accounts')
+    .select('id,account_no,product_type,current_balance,status').eq('member_id', CURRENT_MEMBER.id);
+  const activeAcc = (accounts||[]).filter(a=>a.status==='active');
+  const total = activeAcc.reduce((s,a)=>s+Math.abs(Number(a.current_balance||0)),0);
+  const accIds = activeAcc.map(a=>a.id);
+  let txns = [];
+  if (accIds.length){
+    const { data } = await sb.from('transactions')
+      .select('txn_date,cd_flag,amount,narration,account_id,accounts!account_id(account_no)')
+      .in('account_id', accIds).order('txn_date',{ascending:false}).limit(10);
+    txns = data || [];
+  }
+  const accRows = activeAcc.map(a => `
+    <div class="acc-row">
+      <div><div class="no">${a.account_no}</div><div class="type">${a.product_type}</div></div>
+      <div class="bal">${fmtMoney(Math.abs(Number(a.current_balance||0)))}</div>
+    </div>`).join('');
+  const txnRows = txns.map(t => `
+    <div class="txn-row">
+      <div>${t.txn_date}<br><span style="color:#999;">${t.accounts?.account_no||''} ${t.narration?'· '+t.narration:''}</span></div>
+      <div class="${t.cd_flag==='C'?'c':'d'}">${t.cd_flag==='C'?'+':'-'} ${fmtMoney(t.amount)}</div>
+    </div>`).join('');
+  c.innerHTML = `
+    <div class="card" style="text-align:center;">
+      <div style="font-size:15px;font-weight:600;">${CURRENT_MEMBER.name}</div>
+      <div style="font-size:12px;color:#8a8676;margin-bottom:8px;">सभासद क्र: ${CURRENT_MEMBER.member_no}</div>
+      <div class="stat"><div class="num">${fmtMoney(total)}</div><div class="lbl">एकूण शिल्लक (सर्व सक्रिय खाती)</div></div>
+    </div>
+    <div class="card">
+      <h3 style="margin-top:0;font-size:15px;">माझी खाती (${activeAcc.length})</h3>
+      ${accRows || '<div class="empty">कोणतंही सक्रिय खातं नाही.</div>'}
+    </div>
+    <div class="card">
+      <h3 style="margin-top:0;font-size:15px;">अलीकडचे व्यवहार</h3>
+      ${txnRows || '<div class="empty">व्यवहार आढळले नाहीत.</div>'}
+    </div>
+  `;
+}
+
+/* ---------- पैसे पाठवा ---------- */
+async function renderSendMoney(){
+  if (!CURRENT_MEMBER){ await loadMemberAndShowDashboard(); return; }
+  c.innerHTML = '<div class="empty">लोड होत आहे...</div>';
+  const { data: accounts } = await sb.from('accounts')
+    .select('id,account_no,product_type,current_balance,status')
+    .eq('member_id', CURRENT_MEMBER.id).eq('status','active').in('product_type',['savings','pigmy']);
+  const opts = (accounts||[]).map(a => `<option value="${a.id}">${a.account_no} (${a.product_type}) — ${fmtMoney(Math.abs(Number(a.current_balance||0)))}</option>`).join('');
+  c.innerHTML = `
+    <div class="card">
+      <h2 style="text-align:center;margin-top:0;">पैसे पाठवा</h2>
+      ${!accounts || !accounts.length ? '<div class="empty">पाठवण्यासाठी योग्य (बचत/पिग्मी) सक्रिय खातं सापडलं नाही.</div>' : `
+        <div class="field"><label>कोणत्या खात्यातून</label><select id="sm-from">${opts}</select></div>
+        <div class="field"><label>प्राप्तकर्त्याचा खाते क्रमांक</label>
+          <div style="display:flex;gap:8px;">
+            <input id="sm-to" placeholder="उदा. 290-51" style="flex:1;">
+            <button type="button" id="sm-scan-btn" class="btn ghost" style="width:auto;padding:0 14px;white-space:nowrap;">📷 स्कॅन</button>
+          </div>
+        </div>
+        <div id="scanner-box" class="hidden" style="margin:10px 0;text-align:center;">
+          <video id="scanner-video" style="width:100%;border-radius:8px;" playsinline></video>
+          <canvas id="scanner-canvas" class="hidden"></canvas>
+          <button type="button" id="scanner-cancel" class="link-btn">स्कॅन थांबवा</button>
+        </div>
+        <div class="field"><label>रक्कम</label><input id="sm-amt" type="number" placeholder="0"></div>
+        <div class="field"><label>तपशील (ऐच्छिक)</label><input id="sm-note" placeholder="उदा. खरेदीसाठी"></div>
+        <button class="btn gold" id="sm-btn">पैसे पाठवा</button>
+      `}
+      <div class="err" id="sm-err"></div>
+      <div class="ok" id="sm-ok"></div>
+    </div>
+  `;
+  const btn = document.getElementById('sm-btn');
+  const scanBtn = document.getElementById('sm-scan-btn');
+  if (scanBtn) scanBtn.addEventListener('click', startQrScanner);
+  if (btn) btn.addEventListener('click', async () => {
+    const errEl = document.getElementById('sm-err'), okEl = document.getElementById('sm-ok');
+    errEl.textContent=''; okEl.textContent='';
+    const fromId = document.getElementById('sm-from').value;
+    const toNo = document.getElementById('sm-to').value.trim();
+    const amt = Number(document.getElementById('sm-amt').value);
+    const note = document.getElementById('sm-note').value.trim();
+    if (!toNo || !amt || amt<=0){ errEl.textContent = 'प्राप्तकर्त्याचा खाते क्रमांक व योग्य रक्कम टाका.'; return; }
+    btn.disabled = true; btn.textContent = 'पाठवत आहे...';
+    const { data, error } = await sb.rpc('member_transfer_funds', { p_from_account_id: fromId, p_to_account_no: toNo, p_amount: amt, p_narration: note || null });
+    btn.disabled = false; btn.textContent = 'पैसे पाठवा';
+    if (error){ errEl.textContent = 'त्रुटी: ' + error.message; return; }
+    if (!data.success){ errEl.textContent = data.error; return; }
+    okEl.textContent = `✓ ₹${fmtMoney(amt).replace('₹','')} ${data.to_name} (${data.to_account_no}) यांना यशस्वीरित्या पाठवले.`;
+    document.getElementById('sm-to').value=''; document.getElementById('sm-amt').value=''; document.getElementById('sm-note').value='';
+  });
+}
+
+/* ---------- कॅमेरा QR स्कॅनर ---------- */
+let scannerStream = null, scannerLoopId = null;
+async function startQrScanner(){
+  const box = document.getElementById('scanner-box');
+  const video = document.getElementById('scanner-video');
+  const canvas = document.getElementById('scanner-canvas');
+  const errEl = document.getElementById('sm-err');
+  errEl.textContent = '';
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+    errEl.textContent = 'हा ब्राउझर/पान कॅमेरा वापरण्यास सक्षम नाही (हे पान https:// वरून उघडलेलं आहे का तपासा — file:// वरून कॅमेरा चालत नाही).';
+    return;
+  }
+  try {
+    scannerStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+  } catch(e){
+    errEl.textContent = 'कॅमेरा उघडता आला नाही: ' + e.message + ' (परवानगी दिली आहे का तपासा)';
+    return;
+  }
+  video.srcObject = scannerStream;
+  video.play();
+  box.classList.remove('hidden');
+  document.getElementById('scanner-cancel').onclick = stopQrScanner;
+  const ctx = canvas.getContext('2d');
+  const tick = () => {
+    if (!scannerStream) return;
+    if (video.readyState === video.HAVE_ENOUGH_DATA){
+      canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const code = jsQR(imageData.data, imageData.width, imageData.height);
+      if (code && code.data){
+        document.getElementById('sm-to').value = code.data.trim();
+        stopQrScanner();
+        return;
+      }
+    }
+    scannerLoopId = requestAnimationFrame(tick);
+  };
+  scannerLoopId = requestAnimationFrame(tick);
+}
+function stopQrScanner(){
+  if (scannerLoopId) cancelAnimationFrame(scannerLoopId);
+  scannerLoopId = null;
+  if (scannerStream){ scannerStream.getTracks().forEach(t => t.stop()); scannerStream = null; }
+  const box = document.getElementById('scanner-box');
+  if (box) box.classList.add('hidden');
+}
+
+/* ---------- माझा QR — पैसे स्वीकारण्यासाठी, सगळ्या सभासदांना उपलब्ध ---------- */
+async function renderMyQR(){
+  if (!CURRENT_MEMBER){ await loadMemberAndShowDashboard(); return; }
+  c.innerHTML = '<div class="empty">लोड होत आहे...</div>';
+  const { data: accounts } = await sb.from('accounts')
+    .select('account_no,product_type,status').eq('member_id', CURRENT_MEMBER.id).eq('status','active').eq('product_type','savings').limit(1);
+  const acc = (accounts||[])[0];
+  if (!acc){ c.innerHTML = '<div class="card"><div class="empty">QR दाखवण्यासाठी सक्रिय बचत खातं सापडलं नाही.</div></div>'; return; }
+  c.innerHTML = `
+    <div class="card" style="text-align:center;">
+      <h2 style="margin-top:0;">माझा पेमेंट QR</h2>
+      <div style="font-size:13px;color:#777;margin-bottom:14px;">हा QR इतर कोणालाही दाखवा — ते "पैसे पाठवा" मधून स्कॅन करून तुम्हाला थेट पैसे पाठवू शकतील.</div>
+      <div id="qr-box" style="display:flex;justify-content:center;margin:14px 0;"></div>
+      <div style="font-size:20px;font-weight:700;color:var(--navy);">${acc.account_no}</div>
+      <div style="font-size:12px;color:#8a8676;">${CURRENT_MEMBER.name}</div>
+    </div>
+  `;
+  new QRCode(document.getElementById('qr-box'), { text: acc.account_no, width:200, height:200, colorDark:'#1B2A4A', colorLight:'#ffffff' });
+}
+
+/* ---------- सुरुवात ---------- */
+async function bootstrap(){
+  const { data: { session } } = await sb.auth.getSession();
+  if (session){ await loadMemberAndShowDashboard(); }
+  else { CURRENT_MEMBER = null; logoutBtn.classList.add('hidden'); document.getElementById('tabbar').classList.add('hidden'); renderLogin(); }
+}
+window.addEventListener('pageshow', (e) => { if (e.persisted) bootstrap(); }); // ब्राउझर bfcache मधून पान परत आलं तर ताजी तपासणी
+bootstrap();
+</script>
+</body>
+</html>
