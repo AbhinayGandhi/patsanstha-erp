@@ -97,9 +97,15 @@ function renderLogin(err){
       <div class="err">${err||''}</div>
     </div>
     <button class="link-btn" id="go-register">नवीन सभासद? इथे नोंदणी करा</button>
+    <div style="display:flex;gap:8px;margin-top:14px;">
+      <button class="btn ghost" id="go-emi" style="font-size:12.5px;padding:9px;">🧮 EMI कॅल्क्युलेटर</button>
+      <button class="btn ghost" id="go-rates" style="font-size:12.5px;padding:9px;">📋 व्याजदर बघा</button>
+    </div>
   `;
   document.getElementById('li-find-btn').addEventListener('click', findMemberByMobile);
   document.getElementById('go-register').addEventListener('click', () => renderRegisterStep1());
+  document.getElementById('go-emi').addEventListener('click', () => renderEmiCalculator());
+  document.getElementById('go-rates').addEventListener('click', () => renderInterestRates());
 }
 
 async function findMemberByMobile(){
@@ -154,6 +160,76 @@ async function doLogin(member){
 }
 
 /* ---------- नोंदणी — पायरी १: सभासद क्र + मोबाईल पडताळणी ---------- */
+/* ---------- EMI कॅल्क्युलेटर — लॉगिनशिवाय, कोणालाही वापरता येईल ---------- */
+function renderEmiCalculator(){
+  c.innerHTML = `
+    <div class="card">
+      <h2 style="text-align:center;margin-top:0;">🧮 EMI कॅल्क्युलेटर</h2>
+      <p style="font-size:12.5px;color:#777;text-align:center;">कर्ज घेण्यापूर्वी अंदाजे मासिक हप्ता (EMI) किती येईल ते बघा.</p>
+      <div class="field"><label>कर्ज रक्कम (₹)</label><input id="emi-amt" type="number" placeholder="उदा. 100000"></div>
+      <div class="field"><label>व्याजदर (वार्षिक %)</label><input id="emi-rate" type="number" step="0.1" placeholder="उदा. 10"></div>
+      <div class="field"><label>मुदत (महिने)</label><input id="emi-months" type="number" placeholder="उदा. 36"></div>
+      <button class="btn gold" id="emi-calc-btn">EMI काढा</button>
+      <div id="emi-result" style="margin-top:16px;"></div>
+    </div>
+    <button class="link-btn" id="go-back-login">‹ लॉगिनकडे परत</button>
+  `;
+  document.getElementById('go-back-login').addEventListener('click', () => renderLogin());
+  document.getElementById('emi-calc-btn').addEventListener('click', () => {
+    const P = Number(document.getElementById('emi-amt').value);
+    const annualRate = Number(document.getElementById('emi-rate').value);
+    const n = Number(document.getElementById('emi-months').value);
+    const resEl = document.getElementById('emi-result');
+    if (!P || !annualRate || !n || P<=0 || annualRate<=0 || n<=0){
+      resEl.innerHTML = '<div class="err">कृपया तिन्ही रकाने बरोबर भरा.</div>';
+      return;
+    }
+    const r = annualRate / 12 / 100; // मासिक व्याजदर
+    const emi = (P * r * Math.pow(1+r, n)) / (Math.pow(1+r, n) - 1);
+    const totalPayment = emi * n;
+    const totalInterest = totalPayment - P;
+    resEl.innerHTML = `
+      <div style="background:var(--cream);border-radius:8px;padding:16px;text-align:center;">
+        <div style="font-size:12px;color:#777;">मासिक हप्ता (EMI)</div>
+        <div style="font-size:26px;font-weight:700;color:var(--navy);">${fmtMoney(emi)}</div>
+      </div>
+      <div style="display:flex;justify-content:space-between;margin-top:12px;font-size:13px;">
+        <div>एकूण व्याज: <b>${fmtMoney(totalInterest)}</b></div>
+        <div>एकूण परतफेड: <b>${fmtMoney(totalPayment)}</b></div>
+      </div>
+      <p style="font-size:11px;color:#999;margin-top:10px;">* हा फक्त अंदाजे आकडा आहे (reducing-balance पद्धत) — प्रत्यक्ष EMI शाखेतून मंजूर होणाऱ्या अटींनुसार थोडा वेगळा असू शकतो.</p>
+    `;
+  });
+}
+
+/* ---------- व्याजदर पारदर्शकता पान — लॉगिनशिवाय, सार्वजनिक ---------- */
+async function renderInterestRates(){
+  c.innerHTML = '<div class="empty">लोड होत आहे...</div>';
+  try {
+    const { data: schemes } = await sb.from('schemes').select('name,interest_rate,product_type').order('product_type');
+    const grouped = {};
+    (schemes||[]).forEach(s => { (grouped[s.product_type||'इतर'] = grouped[s.product_type||'इतर']||[]).push(s); });
+    const sectionHtml = Object.entries(grouped).map(([type, list]) => `
+      <div style="margin-top:14px;">
+        <div style="font-weight:600;font-size:13.5px;color:var(--navy);margin-bottom:6px;">${type}</div>
+        ${list.map(s => `<div class="acc-row"><div>${s.name}</div><div class="bal">${s.interest_rate ? s.interest_rate+'%' : '-'}</div></div>`).join('')}
+      </div>
+    `).join('');
+    c.innerHTML = `
+      <div class="card">
+        <h2 style="text-align:center;margin-top:0;">📋 सध्याचे व्याजदर</h2>
+        ${sectionHtml || '<div class="empty">व्याजदर सध्या उपलब्ध नाहीत.</div>'}
+        <p style="font-size:11px;color:#999;margin-top:14px;">* दर बदलू शकतात — अद्ययावत माहितीसाठी शाखेशी संपर्क साधा.</p>
+      </div>
+      <button class="link-btn" id="go-back-login">‹ लॉगिनकडे परत</button>
+    `;
+    document.getElementById('go-back-login').addEventListener('click', () => renderLogin());
+  } catch(e){
+    c.innerHTML = `<div class="card"><div class="err">व्याजदर आणताना त्रुटी: ${e.message}</div></div><button class="link-btn" id="go-back-login">‹ लॉगिनकडे परत</button>`;
+    document.getElementById('go-back-login').addEventListener('click', () => renderLogin());
+  }
+}
+
 function renderRegisterStep1(err){
   c.innerHTML = `
     <div class="card">
