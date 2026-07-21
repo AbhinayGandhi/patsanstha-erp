@@ -87,6 +87,25 @@ logoutBtn.addEventListener('click', async () => {
   renderLogin();
 });
 
+/* ---------- सेशन टाइमआउट — १० मिनिटं निष्क्रियतेनंतर आपोआप लॉगआउट ---------- */
+const IDLE_TIMEOUT_MS = 10 * 60 * 1000;
+let idleTimer = null;
+function resetIdleTimer(){
+  if (!CURRENT_MEMBER) return;
+  if (idleTimer) clearTimeout(idleTimer);
+  idleTimer = setTimeout(async () => {
+    await sb.auth.signOut();
+    CURRENT_MEMBER = null;
+    logoutBtn.classList.add('hidden');
+    document.getElementById('tabbar').classList.add('hidden');
+    renderLogin();
+    alert('१० मिनिटं निष्क्रियतेमुळे सुरक्षिततेसाठी आपोआप लॉगआउट झालात.');
+  }, IDLE_TIMEOUT_MS);
+}
+['mousemove','keydown','click','scroll','touchstart'].forEach(evt =>
+  document.addEventListener(evt, resetIdleTimer, { passive: true })
+);
+
 /* ---------- लॉगिन स्क्रीन — मोबाईल नंबर वापरून ---------- */
 function renderLogin(err){
   c.innerHTML = `
@@ -307,6 +326,7 @@ async function loadMemberAndShowDashboard(){
   CURRENT_MEMBER = member;
   logoutBtn.classList.remove('hidden');
   document.getElementById('tabbar').classList.remove('hidden');
+  resetIdleTimer();
   setActiveTab('dashboard');
   renderDashboard();
 }
