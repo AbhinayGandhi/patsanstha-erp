@@ -1278,6 +1278,7 @@ async function renderReports(c){
       ['उत्पन्न-खर्च पत्रक (नफा-तोटा, कालावधी)', `renderIncomeExpenditure(document.getElementById('content'), '${firstOfMonth()}', '${todayStr()}')`],
       ['ताळेबंद — Ledger (Chart of Accounts आधारित)', "renderBalanceSheetGL(document.getElementById('content'))"],
       ['ताळेबंद — कार्यरत सारांश (Operational)', "renderOperationalBalanceSheet(document.getElementById('content'))"],
+      ['तुलनात्मक अहवाल (Year-on-Year Growth)', "renderYoyComparison(document.getElementById('content'))"],
     ]},
     { h:'भाग भांडवल व इतर', items:[
       ['समभाग (Share) नोंदवही', "renderShareCapitalRegister(document.getElementById('content'))"],
@@ -2139,6 +2140,86 @@ async function renderOperationalBalanceSheet(c){
     `;
     c.innerHTML = reportShell('ताळेबंद — कार्यरत सारांश', `दिनांक ${todayStr()}`, '', body);
   } catch(e){ c.innerHTML = errBanner(e.message); }
+}
+
+/* ---------- तुलनात्मक अहवाल (Year-on-Year / कालावधी तुलना) ---------- */
+async function renderYoyComparison(c, dateA, dateB){
+  dateA = dateA || (() => { const d = new Date(); d.setFullYear(d.getFullYear()-1); return d.toISOString().slice(0,10); })();
+  dateB = dateB || todayStr();
+  c.innerHTML = `
+    <div class="panel">
+      <h3>तुलनात्मक अहवाल (Year-on-Year Growth)</h3>
+      <p style="color:#777;font-size:12.5px;">दोन तारखा निवडून, त्या-त्या तारखेपर्यंतची GL शिल्लक (Category-वार) तुलना करतो — प्रत्येक गटातली वाढ/घट % सह.</p>
+      <div class="form-grid">
+        <div class="field"><label>जुनी तारीख (A)</label><input type="date" id="yoy-date-a" value="${dateA}"></div>
+        <div class="field"><label>नवीन तारीख (B)</label><input type="date" id="yoy-date-b" value="${dateB}"></div>
+      </div>
+      <button class="btn gold" id="yoy-run-btn" style="margin-top:10px;">तुलना करा</button>
+      <div id="yoy-result" style="margin-top:16px;"></div>
+    </div>
+  `;
+  document.getElementById('yoy-run-btn').addEventListener('click', () => runYoyComparison());
+  runYoyComparison(); // सुरुवातीलाच डीफॉल्ट तारखांनी एकदा दाखवतो
+}
+
+async function runYoyComparison(){
+  const dateA = document.getElementById('yoy-date-a').value;
+  const dateB = document.getElementById('yoy-date-b').value;
+  const resEl = document.getElementById('yoy-result');
+  if (!dateA || !dateB){ resEl.innerHTML = '<div class="banner warn">दोन्ही तारखा निवडा.</div>'; return; }
+  resEl.innerHTML = '<div class="empty">गणित करत आहे...</div>';
+  try {
+    const [{data:balA, error:errA}, {data:balB, error:errB}] = await Promise.all([
+      sbClient.rpc('gl_trial_balance_asof', { asof: dateA }),
+      sbClient.rpc('gl_trial_balance_asof', { asof: dateB }),
+    ]);
+    if (errA || errB){ resEl.innerHTML = errBanner('त्रुटी: ' + (errA?.message || errB?.message)); return; }
+
+    const CATEGORY_LABEL = { B:'बँक', D:'ठेव', L:'कर्ज', G:'सर्वसाधारण' };
+    const sumByCategory = rows => {
+      const out = {};
+      (rows||[]).forEach(r => { const k = r.category || 'G'; out[k] = (out[k]||0) + Math.abs(Number(r.computed_balance||0)); });
+      return out;
+    };
+    const sumA = sumByCategory(balA), sumB = sumByCategory(balB);
+    const allCats = Array.from(new Set([...Object.keys(sumA), ...Object.keys(sumB)]));
+    const order = ['B','D','L','G'];
+    allCats.sort((x,y) => order.indexOf(x) - order.indexOf(y));
+
+    const rows = allCats.map(cat => {
+      const a = sumA[cat] || 0, b = sumB[cat] || 0;
+      const diff = b - a;
+      const pct = a !== 0 ? (diff / a * 100) : (b !== 0 ? 100 : 0);
+      return { cat, a, b, diff, pct };
+    });
+    const totalA = rows.reduce((s,r)=>s+r.a,0), totalB = rows.reduce((s,r)=>s+r.b,0);
+    const totalDiff = totalB - totalA;
+    const totalPct = totalA !== 0 ? (totalDiff/totalA*100) : 0;
+
+    const rowHtml = rows.map(r => `
+      <tr>
+        <td>${CATEGORY_LABEL[r.cat] || r.cat}</td>
+        <td style="text-align:right;">${fmtMoney(r.a)}</td>
+        <td style="text-align:right;">${fmtMoney(r.b)}</td>
+        <td style="text-align:right;color:${r.diff>=0?'var(--green)':'var(--rust)'};font-weight:600;">${r.diff>=0?'+':''}${fmtMoney(r.diff)}</td>
+        <td style="text-align:right;color:${r.pct>=0?'var(--green)':'var(--rust)'};font-weight:600;">${r.pct>=0?'+':''}${r.pct.toFixed(1)}%</td>
+      </tr>`).join('');
+
+    resEl.innerHTML = `
+      <div class="table-scroll">
+        <table class="data-table">
+          <thead><tr><th>गट</th><th style="text-align:right;">${dateA}</th><th style="text-align:right;">${dateB}</th><th style="text-align:right;">फरक</th><th style="text-align:right;">वाढ %</th></tr></thead>
+          <tbody>${rowHtml}</tbody>
+          <tfoot><tr style="font-weight:700;border-top:2px solid var(--border);">
+            <td>एकूण</td><td style="text-align:right;">${fmtMoney(totalA)}</td><td style="text-align:right;">${fmtMoney(totalB)}</td>
+            <td style="text-align:right;color:${totalDiff>=0?'var(--green)':'var(--rust)'};">${totalDiff>=0?'+':''}${fmtMoney(totalDiff)}</td>
+            <td style="text-align:right;color:${totalPct>=0?'var(--green)':'var(--rust)'};">${totalPct>=0?'+':''}${totalPct.toFixed(1)}%</td>
+          </tr></tfoot>
+        </table>
+      </div>
+      <p style="font-size:11px;color:#999;margin-top:10px;">* आकडे journal_entries वर आधारित GL शिल्लकेतून काढलेले आहेत — काही GL गटांत (उदा. बंद कर्ज खाती) ज्ञात डेटा-विसंगती असू शकते.</p>
+    `;
+  } catch(e){ resEl.innerHTML = errBanner('त्रुटी: ' + e.message); }
 }
 
 /* ---------- समभाग (Share) नोंदवही ---------- */
