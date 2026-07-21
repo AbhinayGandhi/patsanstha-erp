@@ -3382,6 +3382,21 @@ async function doLogout(){
   showLoginScreen();
 }
 
+/* ---------- सेशन टाइमआउट — २० मिनिटं निष्क्रिय राहिल्यास आपोआप लॉगआउट ---------- */
+const IDLE_TIMEOUT_MS = 20 * 60 * 1000; // २० मिनिटं
+let idleTimer = null;
+function resetIdleTimer(){
+  if (!CURRENT_STAFF) return; // लॉगिनच नसेल तर टायमरची गरज नाही
+  if (idleTimer) clearTimeout(idleTimer);
+  idleTimer = setTimeout(async () => {
+    await doLogout();
+    alert('२० मिनिटं निष्क्रियतेमुळे सुरक्षिततेसाठी आपोआप लॉगआउट झालात — कृपया पुन्हा लॉगिन करा.');
+  }, IDLE_TIMEOUT_MS);
+}
+['mousemove','keydown','click','scroll','touchstart'].forEach(evt =>
+  document.addEventListener(evt, resetIdleTimer, { passive: true })
+);
+
 async function handleLoginSubmit(ev){
   ev.preventDefault();
   const btn = document.getElementById('login-btn');
@@ -3407,6 +3422,7 @@ async function handleLoginSubmit(ev){
     CURRENT_STAFF = profile;
     renderStaffBadge();
     hideLoginScreen();
+    resetIdleTimer();
     render('dashboard');
   } catch(e){
     errEl.textContent = 'अनपेक्षित एरर: ' + e.message;
@@ -3428,6 +3444,7 @@ async function handleLoginSubmit(ev){
         CURRENT_STAFF = profile;
         renderStaffBadge();
         hideLoginScreen();
+        resetIdleTimer();
         render('dashboard');
         return;
       }
