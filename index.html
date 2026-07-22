@@ -1280,6 +1280,7 @@ async function renderReports(c){
       ['ताळेबंद — Ledger (Chart of Accounts आधारित)', "renderBalanceSheetGL(document.getElementById('content'))"],
       ['ताळेबंद — कार्यरत सारांश (Operational)', "renderOperationalBalanceSheet(document.getElementById('content'))"],
       ['तुलनात्मक अहवाल (Year-on-Year Growth)', "renderYoyComparison(document.getElementById('content'))"],
+      ['शाखा-कामगिरी स्कोअरकार्ड', "renderBranchScorecard(document.getElementById('content'))"],
     ]},
     { h:'भाग भांडवल व इतर', items:[
       ['समभाग (Share) नोंदवही', "renderShareCapitalRegister(document.getElementById('content'))"],
@@ -2144,6 +2145,78 @@ async function renderOperationalBalanceSheet(c){
 }
 
 /* ---------- तुलनात्मक अहवाल (Year-on-Year / कालावधी तुलना) ---------- */
+/* ---------- शाखा-कामगिरी स्कोअरकार्ड ---------- */
+async function renderBranchScorecard(c){
+  c.innerHTML = '<div class="empty">डेटा गोळा करत आहे... (मोठा डेटा असल्यास थोडा वेळ लागू शकतो)</div>';
+  try {
+    const [branches, accounts, installments] = await Promise.all([
+      fetchAllRows('branches', 'id,name'),
+      fetchAllRows('accounts', 'id,branch_id,product_type,current_balance,status'),
+      fetchAllRows('loan_installments', 'account_id,due_date,principal_due,interest_due,principal_paid,interest_paid'),
+    ]);
+
+    const today = todayStr();
+    const accById = {}; accounts.forEach(a => accById[a.id] = a);
+
+    const stats = {}; // branch_id -> {deposit, loan, overdueCount, dueCount}
+    branches.forEach(b => { stats[b.id] = { name: b.name, deposit:0, loan:0, loanCount:0, overdueDueAmt:0, totalDueAmt:0 }; });
+    stats['__unknown'] = { name:'अज्ञात शाखा', deposit:0, loan:0, loanCount:0, overdueDueAmt:0, totalDueAmt:0 };
+
+    accounts.filter(a=>a.status==='active').forEach(a => {
+      const key = stats[a.branch_id] ? a.branch_id : '__unknown';
+      const bal = Math.abs(Number(a.current_balance||0));
+      if (['savings','fd','rd','pigmy'].includes(a.product_type)) stats[key].deposit += bal;
+      else if (a.product_type === 'loan'){ stats[key].loan += bal; stats[key].loanCount++; }
+    });
+
+    installments.forEach(i => {
+      const acc = accById[i.account_id];
+      if (!acc) return;
+      const key = stats[acc.branch_id] ? acc.branch_id : '__unknown';
+      const due = Number(i.principal_due||0)+Number(i.interest_due||0);
+      const paid = Number(i.principal_paid||0)+Number(i.interest_paid||0);
+      const outstanding = due - paid;
+      if (outstanding > 1){
+        stats[key].totalDueAmt += due;
+        if (i.due_date < today) stats[key].overdueDueAmt += outstanding;
+      }
+    });
+
+    const rows = Object.values(stats).filter(s => s.deposit>0 || s.loan>0).map(s => {
+      const recoveryPct = s.totalDueAmt > 0 ? Math.max(0, 100 - (s.overdueDueAmt / s.totalDueAmt * 100)) : 100;
+      // साधा स्कोअर: recovery% ला जास्त वजन, आकारमानही थोडं गृहीत धरतो (मोठी शाखा किंचित जास्त गुण)
+      const sizeScore = Math.min(20, (s.deposit + s.loan) / 1000000); // दर १० लाखाला १ गुण, कमाल २०
+      const score = (recoveryPct * 0.8) + sizeScore;
+      return { ...s, recoveryPct, score };
+    }).sort((a,b) => b.score - a.score);
+
+    const rowHtml = rows.map((s,i) => `
+      <tr>
+        <td>${i+1}</td>
+        <td>${s.name}</td>
+        <td style="text-align:right;">${fmtMoney(s.deposit)}</td>
+        <td style="text-align:right;">${fmtMoney(s.loan)}</td>
+        <td style="text-align:right;">${s.loanCount}</td>
+        <td style="text-align:right;color:${s.recoveryPct>=90?'var(--green)':s.recoveryPct>=75?'#e6b800':'var(--rust)'};font-weight:600;">${s.recoveryPct.toFixed(1)}%</td>
+        <td style="text-align:right;font-weight:700;">${s.score.toFixed(1)}</td>
+      </tr>`).join('');
+
+    c.innerHTML = `
+      <div class="panel">
+        <h3>शाखा-कामगिरी स्कोअरकार्ड</h3>
+        <p style="color:#777;font-size:12.5px;">प्रत्येक शाखेची ठेवी, कर्ज-वितरण आणि वसुली-टक्केवारी (Recovery %) एकत्र बघून एक सोपा तुलना-गुण (score) दिला आहे — जास्त गुण = चांगली कामगिरी. वसुली% ला ८०% वजन, आकारमानाला २०% वजन दिलं आहे.</p>
+        <div class="table-scroll">
+          <table class="data-table">
+            <thead><tr><th>क्रम</th><th>शाखा</th><th style="text-align:right;">एकूण ठेवी</th><th style="text-align:right;">एकूण कर्ज</th><th style="text-align:right;">कर्ज-खाती</th><th style="text-align:right;">वसुली %</th><th style="text-align:right;">गुण</th></tr></thead>
+            <tbody>${rowHtml || '<tr><td colspan="7" class="empty">डेटा सापडला नाही.</td></tr>'}</tbody>
+          </table>
+        </div>
+        <p style="font-size:11px;color:#999;margin-top:10px;">* वसुली% म्हणजे थकीत हप्त्यांच्या तुलनेत न भरलेल्या रकमेची टक्केवारी उलटी काढून — फक्त सापेक्ष तुलनेसाठी, अधिकृत NPA गणित नाही.</p>
+      </div>
+    `;
+  } catch(e){ c.innerHTML = errBanner('स्कोअरकार्ड त्रुटी: ' + e.message); }
+}
+
 async function renderYoyComparison(c, dateA, dateB){
   dateA = dateA || (() => { const d = new Date(); d.setFullYear(d.getFullYear()-1); return d.toISOString().slice(0,10); })();
   dateB = dateB || todayStr();
@@ -3365,7 +3438,7 @@ async function start2FAEnrollment(){
       <button class="btn gold small" id="btn-verify-2fa">पडताळा व सुरू करा</button>
       <div class="err" id="twofa-enroll-err" style="color:#b23b3b;font-size:12.5px;margin-top:8px;"></div>
     `;
-    new QRCode(document.getElementById('twofa-qr'), { text: qrUri, width:180, height:180 });
+    document.getElementById('twofa-qr').innerHTML = qrUri; // Supabase आधीच तयार SVG QR पाठवतं, तेच थेट दाखवतो
     document.getElementById('btn-verify-2fa').addEventListener('click', async () => {
       const code = document.getElementById('twofa-verify-code').value.trim();
       const errEl = document.getElementById('twofa-enroll-err');
