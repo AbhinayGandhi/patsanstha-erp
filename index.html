@@ -1281,6 +1281,7 @@ async function renderReports(c){
       ['ताळेबंद — कार्यरत सारांश (Operational)', "renderOperationalBalanceSheet(document.getElementById('content'))"],
       ['तुलनात्मक अहवाल (Year-on-Year Growth)', "renderYoyComparison(document.getElementById('content'))"],
       ['शाखा-कामगिरी स्कोअरकार्ड', "renderBranchScorecard(document.getElementById('content'))"],
+      ['कस्टम रिपोर्ट बिल्डर', "renderCustomReportBuilder(document.getElementById('content'))"],
     ]},
     { h:'भाग भांडवल व इतर', items:[
       ['समभाग (Share) नोंदवही', "renderShareCapitalRegister(document.getElementById('content'))"],
@@ -2146,6 +2147,95 @@ async function renderOperationalBalanceSheet(c){
 
 /* ---------- तुलनात्मक अहवाल (Year-on-Year / कालावधी तुलना) ---------- */
 /* ---------- शाखा-कामगिरी स्कोअरकार्ड ---------- */
+/* ---------- कस्टम रिपोर्ट बिल्डर — कुठलेही २ निकष निवडून क्रॉस-टॅब ---------- */
+const CUSTOM_REPORT_DIMENSIONS = {
+  caste: 'जात', occupation: 'व्यवसाय', branch: 'शाखा', sex: 'लिंग', membership_status: 'सभासदत्व स्थिती',
+};
+
+async function renderCustomReportBuilder(c){
+  const opts = Object.entries(CUSTOM_REPORT_DIMENSIONS).map(([k,v]) => `<option value="${k}">${v}</option>`).join('');
+  c.innerHTML = `
+    <div class="panel">
+      <h3>कस्टम रिपोर्ट बिल्डर</h3>
+      <p style="color:#777;font-size:12.5px;">कुठलेही २ निकष निवडून, सभासदांची संख्या क्रॉस-टॅब स्वरूपात बघा (उदा. जात × व्यवसाय, शाखा × लिंग).</p>
+      <div class="form-grid">
+        <div class="field"><label>ओळी (Rows)</label><select id="cr-row">${opts}</select></div>
+        <div class="field"><label>स्तंभ (Columns)</label><select id="cr-col">${opts}</select></div>
+      </div>
+      <button class="btn gold" id="cr-run-btn" style="margin-top:10px;">रिपोर्ट तयार करा</button>
+      <div id="cr-result" style="margin-top:16px;"></div>
+    </div>
+  `;
+  document.getElementById('cr-col').value = 'occupation';
+  document.getElementById('cr-row').value = 'caste';
+  document.getElementById('cr-run-btn').addEventListener('click', runCustomReport);
+}
+
+async function runCustomReport(){
+  const rowDim = document.getElementById('cr-row').value;
+  const colDim = document.getElementById('cr-col').value;
+  const resEl = document.getElementById('cr-result');
+  if (rowDim === colDim){ resEl.innerHTML = '<div class="banner warn">ओळी व स्तंभ यांसाठी वेगवेगळे निकष निवडा.</div>'; return; }
+  resEl.innerHTML = '<div class="empty">तयार करत आहे... (मोठा डेटा असल्यास थोडा वेळ लागू शकतो)</div>';
+  try {
+    const members = await fetchAllRows('members',
+      'id,sex,membership_status,castes(name),occupations(name),branches(name)');
+
+    const getVal = (m, dim) => {
+      if (dim === 'caste') return m.castes?.name || '(अज्ञात)';
+      if (dim === 'occupation') return m.occupations?.name || '(अज्ञात)';
+      if (dim === 'branch') return m.branches?.name || '(अज्ञात)';
+      if (dim === 'sex') return m.sex || '(अज्ञात)';
+      if (dim === 'membership_status') return m.membership_status || '(अज्ञात)';
+      return '(अज्ञात)';
+    };
+
+    const rowKeys = new Set(), colKeys = new Set();
+    const grid = {}; // rowKey -> colKey -> count
+    members.forEach(m => {
+      const rk = getVal(m, rowDim), ck = getVal(m, colDim);
+      rowKeys.add(rk); colKeys.add(ck);
+      grid[rk] = grid[rk] || {};
+      grid[rk][ck] = (grid[rk][ck] || 0) + 1;
+    });
+
+    const rowList = Array.from(rowKeys).sort();
+    const colList = Array.from(colKeys).sort();
+
+    const headerHtml = colList.map(ck => `<th style="text-align:right;">${ck}</th>`).join('');
+    const bodyHtml = rowList.map(rk => {
+      const rowTotal = colList.reduce((s,ck) => s + (grid[rk][ck]||0), 0);
+      const cells = colList.map(ck => `<td style="text-align:right;">${grid[rk][ck] || 0}</td>`).join('');
+      return `<tr><td>${rk}</td>${cells}<td style="text-align:right;font-weight:700;">${rowTotal}</td></tr>`;
+    }).join('');
+    const colTotals = colList.map(ck => rowList.reduce((s,rk) => s + (grid[rk][ck]||0), 0));
+    const grandTotal = colTotals.reduce((s,x)=>s+x,0);
+    const footerHtml = `<tr style="font-weight:700;border-top:2px solid var(--border);"><td>एकूण</td>${colTotals.map(t=>`<td style="text-align:right;">${t}</td>`).join('')}<td style="text-align:right;">${grandTotal}</td></tr>`;
+
+    resEl.innerHTML = `
+      <div class="table-scroll">
+        <table class="data-table">
+          <thead><tr><th>${CUSTOM_REPORT_DIMENSIONS[rowDim]} \\ ${CUSTOM_REPORT_DIMENSIONS[colDim]}</th>${headerHtml}<th>एकूण</th></tr></thead>
+          <tbody>${bodyHtml}</tbody>
+          <tfoot>${footerHtml}</tfoot>
+        </table>
+      </div>
+      <button class="btn ghost small" id="cr-export-btn" style="margin-top:10px;">CSV म्हणून डाउनलोड करा</button>
+    `;
+    document.getElementById('cr-export-btn').addEventListener('click', () => {
+      const lines = [[CUSTOM_REPORT_DIMENSIONS[rowDim]+'\\'+CUSTOM_REPORT_DIMENSIONS[colDim], ...colList, 'एकूण'].join(',')];
+      rowList.forEach(rk => {
+        const rowTotal = colList.reduce((s,ck) => s + (grid[rk][ck]||0), 0);
+        lines.push([`"${rk}"`, ...colList.map(ck => grid[rk][ck]||0), rowTotal].join(','));
+      });
+      lines.push(['एकूण', ...colTotals, grandTotal].join(','));
+      const blob = new Blob(['\uFEFF'+lines.join('\n')], {type:'text/csv;charset=utf-8'});
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob); a.download = `custom_report_${rowDim}_x_${colDim}.csv`; a.click();
+    });
+  } catch(e){ resEl.innerHTML = errBanner('रिपोर्ट त्रुटी: ' + e.message); }
+}
+
 async function renderBranchScorecard(c){
   c.innerHTML = '<div class="empty">डेटा गोळा करत आहे... (मोठा डेटा असल्यास थोडा वेळ लागू शकतो)</div>';
   try {
