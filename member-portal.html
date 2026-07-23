@@ -49,6 +49,11 @@
   .tabbar{ display:flex; border-top:1px solid var(--border); position:sticky; bottom:0; background:#fff; }
   .tabbar button{ flex:1; border:none; background:none; padding:10px 0; font-size:12px; color:#8a8676; cursor:pointer; }
   .tabbar button.active{ color:var(--navy); font-weight:700; }
+  @media print{
+    .head, .tabbar{ display:none !important; }
+    .wrap{ box-shadow:none; max-width:100%; }
+    body{ background:#fff; }
+  }
 </style>
 </head>
 <body>
@@ -120,11 +125,50 @@ function renderLogin(err){
       <button class="btn ghost" id="go-emi" style="font-size:12.5px;padding:9px;">🧮 EMI कॅल्क्युलेटर</button>
       <button class="btn ghost" id="go-rates" style="font-size:12.5px;padding:9px;">📋 व्याजदर बघा</button>
     </div>
+    <button class="link-btn" id="go-verify" style="margin-top:6px;">✓ पावती सत्यापित करा</button>
   `;
   document.getElementById('li-find-btn').addEventListener('click', findMemberByMobile);
   document.getElementById('go-register').addEventListener('click', () => renderRegisterStep1());
   document.getElementById('go-emi').addEventListener('click', () => renderEmiCalculator());
   document.getElementById('go-rates').addEventListener('click', () => renderInterestRates());
+  document.getElementById('go-verify').addEventListener('click', () => renderReceiptVerify());
+}
+
+/* ---------- पावती सत्यापन — लॉगिनशिवाय, सार्वजनिक ---------- */
+function renderReceiptVerify(){
+  c.innerHTML = `
+    <div class="card">
+      <h2 style="text-align:center;margin-top:0;">✓ पावती सत्यापन</h2>
+      <p style="font-size:12.5px;color:#777;text-align:center;">पावतीवरचा पावती-क्रमांक टाकून ती खरी आहे का तपासा.</p>
+      <div class="field"><label>पावती क्रमांक</label><input id="rv-no" placeholder="उदा. R20260720-123"></div>
+      <button class="btn gold" id="rv-check-btn">तपासा</button>
+      <div id="rv-result" style="margin-top:14px;"></div>
+    </div>
+    <button class="link-btn" id="go-back-login">‹ लॉगिनकडे परत</button>
+  `;
+  document.getElementById('go-back-login').addEventListener('click', () => renderLogin());
+  document.getElementById('rv-check-btn').addEventListener('click', async () => {
+    const no = document.getElementById('rv-no').value.trim();
+    const resEl = document.getElementById('rv-result');
+    if (!no){ resEl.innerHTML = '<div class="err">पावती क्रमांक टाका.</div>'; return; }
+    resEl.innerHTML = '<div class="empty">तपासत आहे...</div>';
+    try {
+      const { data, error } = await sb.rpc('verify_receipt', { p_receipt_no: no });
+      if (error) throw error;
+      if (!data || !data.length){
+        resEl.innerHTML = '<div class="err">✗ ही पावती सापडली नाही — बनावट असू शकते.</div>';
+        return;
+      }
+      const r = data[0];
+      resEl.innerHTML = `
+        <div class="ok" style="font-size:14px;">
+          ✓ ही पावती खरी आहे.<br>
+          <b>सभासद:</b> ${r.member_name}<br>
+          <b>रक्कम:</b> ${fmtMoney(r.amount)}<br>
+          <b>दिनांक:</b> ${new Date(r.issued_at).toLocaleDateString('en-IN')}
+        </div>`;
+    } catch(e){ resEl.innerHTML = '<div class="err">त्रुटी: ' + e.message + '</div>'; }
+  });
 }
 
 async function findMemberByMobile(){
@@ -344,6 +388,46 @@ function setActiveTab(tab){
   document.querySelectorAll('#tabbar button').forEach(b => b.classList.toggle('active', b.dataset.tab===tab));
 }
 
+/* ---------- पासबुक-स्टाईल स्टेटमेंट (प्रिंट/PDF) ---------- */
+async function renderPassbookStatement(accountId, accountNo, productType){
+  c.innerHTML = '<div class="empty">लोड होत आहे...</div>';
+  const { data: txns } = await sb.from('transactions')
+    .select('txn_date,cd_flag,amount,balance_after,narration')
+    .eq('account_id', accountId).order('txn_date',{ascending:true}).order('created_at',{ascending:true});
+  const rows = (txns||[]).map(t => `
+    <tr>
+      <td>${t.txn_date}</td>
+      <td>${t.narration||'-'}</td>
+      <td style="text-align:right;color:${t.cd_flag==='C'?'var(--green)':'var(--rust)'};">${t.cd_flag==='C'?'+':'-'}${fmtMoney(t.amount)}</td>
+      <td style="text-align:right;">${fmtMoney(t.balance_after)}</td>
+    </tr>`).join('');
+  c.innerHTML = `
+    <div class="card">
+      <div style="text-align:center;border-bottom:2px solid var(--navy);padding-bottom:10px;margin-bottom:14px;">
+        <h2 style="margin:0;">पतसंस्था ERP</h2>
+        <div style="font-size:12px;color:#8a8676;">पासबुक स्टेटमेंट</div>
+      </div>
+      <div style="font-size:13px;margin-bottom:10px;">
+        <b>सभासद:</b> ${CURRENT_MEMBER.name} (${CURRENT_MEMBER.member_no})<br>
+        <b>खाते क्र:</b> ${accountNo} &nbsp; <b>प्रकार:</b> ${productType}
+      </div>
+      <div style="overflow-x:auto;">
+        <table style="width:100%;border-collapse:collapse;font-size:12px;">
+          <thead><tr style="border-bottom:1px solid var(--border);">
+            <th style="text-align:left;padding:6px 4px;">दिनांक</th><th style="text-align:left;padding:6px 4px;">तपशील</th>
+            <th style="text-align:right;padding:6px 4px;">रक्कम</th><th style="text-align:right;padding:6px 4px;">शिल्लक</th>
+          </tr></thead>
+          <tbody>${rows || '<tr><td colspan="4" style="text-align:center;padding:14px;color:#999;">व्यवहार आढळले नाहीत.</td></tr>'}</tbody>
+        </table>
+      </div>
+      <div style="margin-top:16px;display:flex;gap:8px;">
+        <button class="btn gold" onclick="window.print()">🖨 प्रिंट / PDF सेव्ह करा</button>
+      </div>
+    </div>
+    <button class="link-btn" id="pb-back" onclick="renderDashboard()">‹ मुख्यपृष्ठाकडे परत</button>
+  `;
+}
+
 async function renderDashboard(){
   if (!CURRENT_MEMBER){ await loadMemberAndShowDashboard(); return; }
   c.innerHTML = '<div class="empty">लोड होत आहे...</div>';
@@ -362,7 +446,10 @@ async function renderDashboard(){
   const accRows = activeAcc.map(a => `
     <div class="acc-row">
       <div><div class="no">${a.account_no}</div><div class="type">${a.product_type}</div></div>
-      <div class="bal">${fmtMoney(Math.abs(Number(a.current_balance||0)))}</div>
+      <div style="text-align:right;">
+        <div class="bal">${fmtMoney(Math.abs(Number(a.current_balance||0)))}</div>
+        <button class="link-btn" style="margin:0;font-size:11px;" onclick="renderPassbookStatement('${a.id}','${a.account_no}','${a.product_type}')">📄 स्टेटमेंट</button>
+      </div>
     </div>`).join('');
   const txnRows = txns.map(t => `
     <div class="txn-row">
