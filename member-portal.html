@@ -70,6 +70,8 @@
     <button data-tab="dashboard" class="active">🏠 मुख्यपृष्ठ</button>
     <button data-tab="send">💸 पैसे पाठवा</button>
     <button data-tab="myqr" id="tab-myqr">📱 माझा QR</button>
+    <button data-tab="deposit" id="tab-deposit">💵 कॅश डिपॉझिट</button>
+    <button data-tab="loanapp" id="tab-loanapp">📝 कर्ज अर्ज</button>
   </div>
 </div>
 
@@ -383,6 +385,8 @@ document.getElementById('tabbar').addEventListener('click', (e) => {
   if (btn.dataset.tab === 'dashboard') renderDashboard();
   else if (btn.dataset.tab === 'send') renderSendMoney();
   else if (btn.dataset.tab === 'myqr') renderMyQR();
+  else if (btn.dataset.tab === 'deposit') renderCashDepositRequest();
+  else if (btn.dataset.tab === 'loanapp') renderLoanApplication();
 });
 function setActiveTab(tab){
   document.querySelectorAll('#tabbar button').forEach(b => b.classList.toggle('active', b.dataset.tab===tab));
@@ -575,6 +579,101 @@ function stopQrScanner(){
 }
 
 /* ---------- माझा QR — पैसे स्वीकारण्यासाठी, सगळ्या सभासदांना उपलब्ध ---------- */
+/* ---------- कॅश डिपॉझिट विनंती (OTP-सत्यापित) ---------- */
+/* ---------- कर्ज मागणी अर्ज ---------- */
+async function renderLoanApplication(){
+  c.innerHTML = '<div class="empty">लोड होत आहे...</div>';
+  const { data: myApps } = await sb.from('loan_applications')
+    .select('id,amount,purpose,tenure_months,status,applied_at,review_note')
+    .eq('member_id', CURRENT_MEMBER.id).order('applied_at', { ascending:false });
+
+  const STATUS_LABEL = { pending:'⏳ प्रलंबित', approved:'✅ मंजूर', rejected:'❌ नामंजूर' };
+  const pastRows = (myApps||[]).map(a => `
+    <div class="acc-row" style="flex-direction:column;align-items:flex-start;">
+      <div style="display:flex;justify-content:space-between;width:100%;">
+        <div><b>${fmtMoney(a.amount)}</b> — ${a.purpose||'-'}</div>
+        <div>${STATUS_LABEL[a.status]||a.status}</div>
+      </div>
+      <div style="font-size:11px;color:#999;">${new Date(a.applied_at).toLocaleDateString('en-IN')} · ${a.tenure_months||'-'} महिने</div>
+      ${a.review_note ? `<div style="font-size:11px;color:#777;margin-top:2px;">टीप: ${a.review_note}</div>` : ''}
+    </div>`).join('');
+
+  c.innerHTML = `
+    <div class="card">
+      <h2 style="text-align:center;margin-top:0;">📝 कर्ज मागणी अर्ज</h2>
+      <div class="field"><label>हवी असलेली रक्कम (₹)</label><input id="la-amount" type="number" placeholder="उदा. 100000"></div>
+      <div class="field"><label>हेतू</label><input id="la-purpose" placeholder="उदा. घर दुरुस्ती"></div>
+      <div class="field"><label>हवी असलेली मुदत (महिने)</label><input id="la-tenure" type="number" placeholder="उदा. 36"></div>
+      <button class="btn gold" id="la-submit-btn">अर्ज सादर करा</button>
+      <div class="err" id="la-err"></div>
+      <div class="ok" id="la-ok"></div>
+    </div>
+    <div class="card">
+      <h3 style="margin-top:0;font-size:15px;">माझे आधीचे अर्ज</h3>
+      ${pastRows || '<div class="empty">अजून कुठलाही अर्ज केलेला नाही.</div>'}
+    </div>
+  `;
+  document.getElementById('la-submit-btn').addEventListener('click', async () => {
+    const errEl = document.getElementById('la-err'), okEl = document.getElementById('la-ok');
+    errEl.textContent = ''; okEl.textContent = '';
+    const amount = Number(document.getElementById('la-amount').value);
+    const purpose = document.getElementById('la-purpose').value.trim();
+    const tenure = Number(document.getElementById('la-tenure').value);
+    if (!amount || amount <= 0){ errEl.textContent = 'बरोबर रक्कम टाका.'; return; }
+    const btn = document.getElementById('la-submit-btn');
+    btn.disabled = true; btn.textContent = 'सादर करत आहे...';
+    const { error } = await sb.from('loan_applications')
+      .insert({ member_id: CURRENT_MEMBER.id, amount, purpose: purpose||null, tenure_months: tenure||null });
+    btn.disabled = false; btn.textContent = 'अर्ज सादर करा';
+    if (error){ errEl.textContent = 'त्रुटी: ' + error.message; return; }
+    okEl.textContent = '✓ अर्ज यशस्वीरित्या सादर झाला — शाखेकडून संपर्क केला जाईल.';
+    setTimeout(() => renderLoanApplication(), 1200);
+  });
+}
+
+async function renderCashDepositRequest(){
+  c.innerHTML = '<div class="empty">लोड होत आहे...</div>';
+  const { data: accounts } = await sb.from('accounts')
+    .select('id,account_no,product_type,status').eq('member_id', CURRENT_MEMBER.id).eq('status','active').in('product_type',['savings','pigmy']);
+  const opts = (accounts||[]).map(a => `<option value="${a.id}">${a.account_no} (${a.product_type})</option>`).join('');
+  c.innerHTML = `
+    <div class="card">
+      <h2 style="text-align:center;margin-top:0;">💵 कॅश डिपॉझिट</h2>
+      <p style="font-size:12.5px;color:#777;text-align:center;">रक्कम व खातं निवडा — एक OTP मिळेल, तो कॅश-काउंटरवर सांगून पैसे जमा करा.</p>
+      ${!accounts || !accounts.length ? '<div class="empty">डिपॉझिटसाठी योग्य (बचत/पिग्मी) सक्रिय खातं सापडलं नाही.</div>' : `
+        <div class="field"><label>कोणत्या खात्यात</label><select id="cd-account">${opts}</select></div>
+        <div class="field"><label>रक्कम</label><input id="cd-amount" type="number" placeholder="0"></div>
+        <button class="btn gold" id="cd-request-btn">OTP मिळवा</button>
+      `}
+      <div class="err" id="cd-err"></div>
+      <div id="cd-otp-box"></div>
+    </div>
+  `;
+  const btn = document.getElementById('cd-request-btn');
+  if (btn) btn.addEventListener('click', async () => {
+    const errEl = document.getElementById('cd-err');
+    errEl.textContent = '';
+    const accountId = document.getElementById('cd-account').value;
+    const amount = Number(document.getElementById('cd-amount').value);
+    if (!amount || amount <= 0){ errEl.textContent = 'बरोबर रक्कम टाका.'; return; }
+    btn.disabled = true; btn.textContent = 'तयार करत आहे...';
+    const otp = String(Math.floor(100000 + Math.random()*900000));
+    const { data, error } = await sb.from('cash_deposit_requests')
+      .insert({ account_id: accountId, member_id: CURRENT_MEMBER.id, amount, otp })
+      .select('id').single();
+    btn.disabled = false; btn.textContent = 'OTP मिळवा';
+    if (error){ errEl.textContent = 'त्रुटी: ' + error.message; return; }
+    document.getElementById('cd-otp-box').innerHTML = `
+      <div style="background:var(--cream);border-radius:8px;padding:18px;text-align:center;margin-top:14px;">
+        <div style="font-size:12px;color:#777;">हा OTP कॅश-काउंटरवर सांगा</div>
+        <div style="font-size:32px;font-weight:700;color:var(--navy);letter-spacing:4px;">${otp}</div>
+        <div style="font-size:12px;color:#777;margin-top:6px;">रक्कम: ${fmtMoney(amount)}</div>
+      </div>
+      <p style="font-size:11px;color:#999;margin-top:10px;text-align:center;">काउंटरवर पैसे मोजून OTP सांगितल्यावरच खात्यात जमा होईल.</p>
+    `;
+  });
+}
+
 async function renderMyQR(){
   if (!CURRENT_MEMBER){ await loadMemberAndShowDashboard(); return; }
   c.innerHTML = '<div class="empty">लोड होत आहे...</div>';
