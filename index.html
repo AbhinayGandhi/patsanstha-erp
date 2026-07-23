@@ -202,6 +202,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
       <a data-view="analytics"><span class="ic">📊</span> Analytics</a>
       <a data-view="notifications"><span class="ic">🔔</span> सूचना</a>
       <a data-view="cleanup"><span class="ic">🧹</span> साफसफाई</a>
+      <a data-view="dataquality"><span class="ic">🩺</span> डेटा गुणवत्ता</a>
       <a data-view="settings"><span class="ic">⚙</span> सेटिंग्ज</a>
     </nav>
   </div>
@@ -393,6 +394,7 @@ async function render(view, param){
   if (view === 'reports') return renderReports(c);
   if (view === 'import') return renderImport(c);
   if (view === 'cleanup') return renderCleanup(c);
+  if (view === 'dataquality') return renderDataQuality(c);
   if (view === 'search') return renderGlobalSearch(c, param);
   if (view === 'notifications') return renderNotifications(c);
   if (view === 'member360') return renderMember360(c, param);
@@ -3352,6 +3354,99 @@ async function renderNotifications(c){
       </div>
     `;
   } catch(e){ c.innerHTML = errBanner('सूचना तयार करताना त्रुटी: ' + e.message); }
+}
+
+/* =========================================================
+   डेटा गुणवत्ता डॅशबोर्ड — एका पानावर सगळे संभाव्य डेटा-प्रॉब्लेम्स
+   ========================================================= */
+async function renderDataQuality(c){
+  c.innerHTML = '<div class="empty">डेटा तपासत आहे... (मोठा डेटा असल्यास थोडा वेळ लागू शकतो)</div>';
+  try {
+    const members = await fetchAllRows('members', 'id,member_no,name,mobile,birth_date,address_line1');
+    const accounts = await fetchAllRows('accounts', 'id,account_no,current_balance,product_type,status,member_id');
+    let nomineeAccountIds = new Set();
+    try {
+      const noms = await fetchAllRows('nominees', 'account_id');
+      nomineeAccountIds = new Set(noms.map(n=>n.account_id));
+    } catch(e){ /* nominees टेबल नसेल तर दुर्लक्ष */ }
+
+    // १. डुप्लिकेट मोबाईल नंबर
+    const mobileMap = {};
+    members.forEach(m => { if (m.mobile){ (mobileMap[m.mobile] = mobileMap[m.mobile]||[]).push(m); } });
+    const dupMobiles = Object.entries(mobileMap).filter(([mob,list]) => list.length > 1);
+
+    // २. पत्ता नसलेले सभासद
+    const missingAddress = members.filter(m => !m.address_line1);
+
+    // ३. जन्मतारीख चुकीची (भविष्यातली, किंवा वय १०० पेक्षा जास्त)
+    const today = new Date();
+    const wrongDob = members.filter(m => {
+      if (!m.birth_date) return false;
+      const d = new Date(m.birth_date);
+      const age = today.getFullYear() - d.getFullYear();
+      return d > today || age > 100;
+    });
+
+    // ४. निगेटिव्ह शिल्लक (बचत/ठेव खात्यांत ऋण शिल्लक असणं चुकीचं)
+    const negativeBalance = accounts.filter(a => a.status==='active' && ['savings','fd','rd','pigmy'].includes(a.product_type) && Number(a.current_balance) < 0);
+
+    // ५. नामनिर्देशन नसलेली सक्रिय खाती
+    const missingNominee = accounts.filter(a => a.status==='active' && !nomineeAccountIds.has(a.id));
+
+    // ६. मोबाईल नंबर नसलेले सभासद
+    const missingMobile = members.filter(m => !m.mobile);
+
+    const checks = [
+      { title:'डुप्लिकेट मोबाईल नंबर', count: dupMobiles.reduce((s,[,l])=>s+l.length,0), severity:'high',
+        detail: dupMobiles.slice(0,20).map(([mob,list]) => `<tr><td>${mob}</td><td>${list.map(m=>m.name+' ('+m.member_no+')').join(', ')}</td></tr>`).join(''),
+        headers:['मोबाईल','सभासद'] },
+      { title:'नामनिर्देशन (Nominee) नसलेली सक्रिय खाती', count: missingNominee.length, severity:'high',
+        detail: missingNominee.slice(0,20).map(a => `<tr><td>${a.account_no}</td><td>${a.product_type}</td></tr>`).join(''),
+        headers:['खाते क्र','प्रकार'] },
+      { title:'निगेटिव्ह शिल्लक (ठेव-प्रकार खाती)', count: negativeBalance.length, severity:'high',
+        detail: negativeBalance.slice(0,20).map(a => `<tr><td>${a.account_no}</td><td>${fmtMoney(a.current_balance)}</td></tr>`).join(''),
+        headers:['खाते क्र','शिल्लक'] },
+      { title:'मोबाईल नंबर नसलेले सभासद', count: missingMobile.length, severity:'medium',
+        detail: missingMobile.slice(0,20).map(m => `<tr><td>${m.member_no}</td><td>${m.name}</td></tr>`).join(''),
+        headers:['सभासद क्र','नाव'] },
+      { title:'पत्ता नसलेले सभासद', count: missingAddress.length, severity:'medium',
+        detail: missingAddress.slice(0,20).map(m => `<tr><td>${m.member_no}</td><td>${m.name}</td></tr>`).join(''),
+        headers:['सभासद क्र','नाव'] },
+      { title:'चुकीची जन्मतारीख (भविष्यातली/वय १००+)', count: wrongDob.length, severity:'low',
+        detail: wrongDob.slice(0,20).map(m => `<tr><td>${m.member_no}</td><td>${m.name}</td><td>${m.birth_date}</td></tr>`).join(''),
+        headers:['सभासद क्र','नाव','जन्मतारीख'] },
+    ];
+
+    const totalIssues = checks.reduce((s,ch)=>s+ch.count,0);
+    const sevColor = { high:'#c0392b', medium:'#e6b800', low:'#8a8676' };
+    const sevLabel = { high:'🔴 गंभीर', medium:'🟡 मध्यम', low:'⚪ किरकोळ' };
+
+    const cardsHtml = checks.map((ch,i) => `
+      <div class="panel" style="margin-top:14px;border-left:4px solid ${sevColor[ch.severity]};">
+        <div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;" onclick="document.getElementById('dq-detail-${i}').classList.toggle('hidden')">
+          <h3 style="margin:0;">${ch.title} <span style="font-size:11px;color:${sevColor[ch.severity]};font-weight:600;">${sevLabel[ch.severity]}</span></h3>
+          <div style="font-size:22px;font-weight:700;color:${ch.count>0?sevColor[ch.severity]:'var(--green)'};">${ch.count}</div>
+        </div>
+        ${ch.count>0 ? `
+          <div id="dq-detail-${i}" class="hidden" style="margin-top:10px;">
+            <div class="table-scroll">
+              <table class="data-table"><thead><tr>${ch.headers.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${ch.detail}</tbody></table>
+            </div>
+            ${ch.count > 20 ? `<p style="font-size:11px;color:#999;margin-top:6px;">फक्त पहिल्या २० दाखवल्या आहेत, एकूण ${ch.count}.</p>` : ''}
+          </div>` : '<div style="font-size:12px;color:var(--green);margin-top:6px;">✓ काहीही सापडलं नाही.</div>'}
+      </div>
+    `).join('');
+
+    c.innerHTML = `
+      <div class="stat-row">
+        <div class="stat" style="border-top-color:${totalIssues>0?'#c0392b':'var(--green)'};">
+          <div class="num">${totalIssues}</div><div class="lbl">एकूण संभाव्य समस्या</div>
+        </div>
+      </div>
+      ${cardsHtml}
+      <p style="font-size:11px;color:#999;margin-top:14px;">* हे सगळे नियम-आधारित (rule-based) इशारे आहेत — प्रत्येक बाब स्वतः पडताळून मगच दुरुस्ती करा. एखाद्या शीर्षकावर क्लिक करून तपशील उघड/बंद करता येईल.</p>
+    `;
+  } catch(e){ c.innerHTML = errBanner('डेटा गुणवत्ता तपासताना त्रुटी: ' + e.message); }
 }
 
 async function renderCleanup(c){
