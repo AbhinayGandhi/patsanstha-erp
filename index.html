@@ -203,6 +203,8 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
       <a data-view="notifications"><span class="ic">🔔</span> सूचना</a>
       <a data-view="cleanup"><span class="ic">🧹</span> साफसफाई</a>
       <a data-view="dataquality"><span class="ic">🩺</span> डेटा गुणवत्ता</a>
+      <a data-view="cashdeposit"><span class="ic">💵</span> कॅश डिपॉझिट पडताळणी</a>
+      <a data-view="loanapps"><span class="ic">📝</span> कर्ज अर्ज</a>
       <a data-view="settings"><span class="ic">⚙</span> सेटिंग्ज</a>
     </nav>
   </div>
@@ -395,6 +397,8 @@ async function render(view, param){
   if (view === 'import') return renderImport(c);
   if (view === 'cleanup') return renderCleanup(c);
   if (view === 'dataquality') return renderDataQuality(c);
+  if (view === 'cashdeposit') return renderCashDepositVerify(c);
+  if (view === 'loanapps') return renderLoanApplications(c);
   if (view === 'search') return renderGlobalSearch(c, param);
   if (view === 'notifications') return renderNotifications(c);
   if (view === 'member360') return renderMember360(c, param);
@@ -3359,6 +3363,114 @@ async function renderNotifications(c){
 /* =========================================================
    डेटा गुणवत्ता डॅशबोर्ड — एका पानावर सगळे संभाव्य डेटा-प्रॉब्लेम्स
    ========================================================= */
+/* ---------- कॅश डिपॉझिट पडताळणी (स्टाफसाठी) ---------- */
+/* ---------- कर्ज मागणी अर्ज — स्टाफसाठी मंजूर/नामंजूर ---------- */
+async function renderLoanApplications(c, filterStatus){
+  filterStatus = filterStatus || 'pending';
+  c.innerHTML = '<div class="empty">अर्ज आणत आहे...</div>';
+  try {
+    let q = sbClient.from('loan_applications')
+      .select('id,amount,purpose,tenure_months,status,applied_at,review_note,members!member_id(name,member_no,mobile)')
+      .order('applied_at', { ascending: false });
+    if (filterStatus !== 'all') q = q.eq('status', filterStatus);
+    const { data: apps, error } = await q;
+    if (error) throw error;
+
+    const STATUS_LABEL = { pending:'⏳ प्रलंबित', approved:'✅ मंजूर', rejected:'❌ नामंजूर' };
+    const rows = (apps||[]).map(a => `
+      <tr>
+        <td>${new Date(a.applied_at).toLocaleDateString('en-IN')}</td>
+        <td>${a.members?.name||''} (${a.members?.member_no||''})</td>
+        <td>${a.members?.mobile||''}</td>
+        <td style="text-align:right;">${fmtMoney(a.amount)}</td>
+        <td>${a.purpose||'-'}</td>
+        <td>${a.tenure_months||'-'}</td>
+        <td>${STATUS_LABEL[a.status]||a.status}</td>
+        <td>${a.status === 'pending' ? `
+          <button class="btn gold small" onclick="reviewLoanApplication('${a.id}','approved')">मंजूर</button>
+          <button class="btn ghost small" onclick="reviewLoanApplication('${a.id}','rejected')">नामंजूर</button>
+        ` : (a.review_note ? `<span style="font-size:11px;color:#777;">${a.review_note}</span>` : '')}</td>
+      </tr>`).join('');
+
+    c.innerHTML = `
+      <div class="panel">
+        <h3>कर्ज मागणी अर्ज</h3>
+        <div style="display:flex;gap:8px;margin-bottom:12px;">
+          <button class="btn ${filterStatus==='pending'?'gold':'ghost'} small" onclick="renderLoanApplications(document.getElementById('content'),'pending')">प्रलंबित</button>
+          <button class="btn ${filterStatus==='approved'?'gold':'ghost'} small" onclick="renderLoanApplications(document.getElementById('content'),'approved')">मंजूर</button>
+          <button class="btn ${filterStatus==='rejected'?'gold':'ghost'} small" onclick="renderLoanApplications(document.getElementById('content'),'rejected')">नामंजूर</button>
+          <button class="btn ${filterStatus==='all'?'gold':'ghost'} small" onclick="renderLoanApplications(document.getElementById('content'),'all')">सगळे</button>
+        </div>
+        <div class="table-scroll">
+          <table class="data-table">
+            <thead><tr><th>तारीख</th><th>सभासद</th><th>मोबाईल</th><th>रक्कम</th><th>हेतू</th><th>मुदत(म.)</th><th>स्थिती</th><th></th></tr></thead>
+            <tbody>${rows || '<tr><td colspan="8" class="empty">कुठलेही अर्ज सापडले नाहीत.</td></tr>'}</tbody>
+          </table>
+        </div>
+        <div id="la-review-status" style="margin-top:10px;"></div>
+      </div>
+    `;
+  } catch(e){ c.innerHTML = errBanner('त्रुटी: ' + e.message); }
+}
+
+async function reviewLoanApplication(appId, decision){
+  const note = decision === 'rejected' ? prompt('नामंजूर करण्याचं कारण (ऐच्छिक):') : prompt('टीप (ऐच्छिक):');
+  const { error } = await sbClient.from('loan_applications').update({
+    status: decision, reviewed_at: new Date().toISOString(),
+    reviewed_by: CURRENT_STAFF ? CURRENT_STAFF.id : null,
+    review_note: note || null,
+  }).eq('id', appId);
+  const statusEl = document.getElementById('la-review-status');
+  if (error){ statusEl.innerHTML = errBanner('त्रुटी: ' + error.message); return; }
+  statusEl.innerHTML = `<div class="banner ok">✓ अर्ज ${decision==='approved'?'मंजूर':'नामंजूर'} केला.</div>`;
+  setTimeout(() => render('loanapps'), 1000);
+}
+
+async function renderCashDepositVerify(c){
+  c.innerHTML = '<div class="empty">प्रलंबित विनंत्या आणत आहे...</div>';
+  try {
+    const { data: reqs, error } = await sbClient.from('cash_deposit_requests')
+      .select('id,amount,status,created_at,accounts!account_id(account_no),members!member_id(name,member_no,mobile)')
+      .eq('status', 'pending').order('created_at', { ascending: false });
+    if (error) throw error;
+    const rows = (reqs||[]).map(r => `
+      <tr>
+        <td>${new Date(r.created_at).toLocaleString('en-IN')}</td>
+        <td>${r.members?.name||''} (${r.members?.member_no||''})</td>
+        <td>${r.members?.mobile||''}</td>
+        <td>${r.accounts?.account_no||''}</td>
+        <td style="text-align:right;">${fmtMoney(r.amount)}</td>
+        <td><input type="text" maxlength="6" placeholder="OTP" id="otp-${r.id}" style="width:80px;padding:5px;"></td>
+        <td><button class="btn gold small" onclick="verifyCashDeposit('${r.id}')">पडताळा</button></td>
+      </tr>`).join('');
+    c.innerHTML = `
+      <div class="panel">
+        <h3>कॅश डिपॉझिट पडताळणी</h3>
+        <p style="color:#777;font-size:12.5px;">सभासदाकडून रोख मोजून घेतल्यावर, त्याने सांगितलेला OTP टाकून "पडताळा" दाबा — खात्यात रक्कम आपोआप जमा होईल.</p>
+        <div class="table-scroll">
+          <table class="data-table">
+            <thead><tr><th>विनंती वेळ</th><th>सभासद</th><th>मोबाईल</th><th>खाते क्र</th><th>रक्कम</th><th>OTP</th><th></th></tr></thead>
+            <tbody>${rows || '<tr><td colspan="7" class="empty">कोणतीही प्रलंबित विनंती नाही.</td></tr>'}</tbody>
+          </table>
+        </div>
+        <div id="cdv-status" style="margin-top:10px;"></div>
+      </div>
+    `;
+  } catch(e){ c.innerHTML = errBanner('त्रुटी: ' + e.message); }
+}
+
+async function verifyCashDeposit(requestId){
+  const otpInput = document.getElementById('otp-' + requestId);
+  const statusEl = document.getElementById('cdv-status');
+  const otp = otpInput.value.trim();
+  if (!otp || otp.length !== 6){ statusEl.innerHTML = '<div class="banner warn">बरोबर ६-अंकी OTP टाका.</div>'; return; }
+  const { data, error } = await sbClient.rpc('verify_cash_deposit', { p_request_id: requestId, p_otp: otp });
+  if (error){ statusEl.innerHTML = errBanner('त्रुटी: ' + error.message); return; }
+  if (!data.success){ statusEl.innerHTML = `<div class="banner warn">${data.error}</div>`; return; }
+  statusEl.innerHTML = `<div class="banner ok">✓ यशस्वीरित्या जमा झालं — नवीन शिल्लक: ${fmtMoney(data.new_balance)}</div>`;
+  setTimeout(() => render('cashdeposit'), 1200);
+}
+
 async function renderDataQuality(c){
   c.innerHTML = '<div class="empty">डेटा तपासत आहे... (मोठा डेटा असल्यास थोडा वेळ लागू शकतो)</div>';
   try {
