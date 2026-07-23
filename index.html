@@ -1282,6 +1282,7 @@ async function renderReports(c){
       ['तुलनात्मक अहवाल (Year-on-Year Growth)', "renderYoyComparison(document.getElementById('content'))"],
       ['शाखा-कामगिरी स्कोअरकार्ड', "renderBranchScorecard(document.getElementById('content'))"],
       ['कस्टम रिपोर्ट बिल्डर', "renderCustomReportBuilder(document.getElementById('content'))"],
+      ['सभासद वयोगट/लिंग-वार विश्लेषण', "renderDemographicReport(document.getElementById('content'))"],
     ]},
     { h:'भाग भांडवल व इतर', items:[
       ['समभाग (Share) नोंदवही', "renderShareCapitalRegister(document.getElementById('content'))"],
@@ -2152,6 +2153,69 @@ const CUSTOM_REPORT_DIMENSIONS = {
   caste: 'जात', occupation: 'व्यवसाय', branch: 'शाखा', sex: 'लिंग', membership_status: 'सभासदत्व स्थिती',
 };
 
+/* ---------- सभासद वयोगट/लिंग-वार विश्लेषण ---------- */
+async function renderDemographicReport(c){
+  c.innerHTML = '<div class="empty">डेटा गोळा करत आहे...</div>';
+  try {
+    const members = await fetchAllRows('members', 'sex,birth_date,membership_status');
+    const active = members.filter(m => m.membership_status === 'active' || !m.membership_status);
+    const AGE_BUCKETS = ['18-25','26-35','36-45','46-55','56-65','66+','अज्ञात'];
+    const calcAge = (dob) => {
+      if (!dob) return null;
+      const b = new Date(dob), t = new Date();
+      let age = t.getFullYear() - b.getFullYear();
+      if (t.getMonth() < b.getMonth() || (t.getMonth()===b.getMonth() && t.getDate()<b.getDate())) age--;
+      return age;
+    };
+    const bucketOf = (age) => {
+      if (age == null || isNaN(age)) return 'अज्ञात';
+      if (age <= 25) return '18-25';
+      if (age <= 35) return '26-35';
+      if (age <= 45) return '36-45';
+      if (age <= 55) return '46-55';
+      if (age <= 65) return '56-65';
+      return '66+';
+    };
+    const grid = {}; // ageBucket -> sex -> count
+    const sexKeys = new Set();
+    AGE_BUCKETS.forEach(b => grid[b] = {});
+    active.forEach(m => {
+      const bucket = bucketOf(calcAge(m.birth_date));
+      const sex = m.sex || '(अज्ञात)';
+      sexKeys.add(sex);
+      grid[bucket][sex] = (grid[bucket][sex]||0) + 1;
+    });
+    const sexList = Array.from(sexKeys).sort();
+    const headerHtml = sexList.map(s => `<th style="text-align:right;">${s}</th>`).join('');
+    const bodyHtml = AGE_BUCKETS.map(b => {
+      const rowTotal = sexList.reduce((s,sx)=>s+(grid[b][sx]||0),0);
+      if (rowTotal === 0) return '';
+      const cells = sexList.map(sx => `<td style="text-align:right;">${grid[b][sx]||0}</td>`).join('');
+      return `<tr><td>${b}</td>${cells}<td style="text-align:right;font-weight:700;">${rowTotal}</td></tr>`;
+    }).join('');
+    const colTotals = sexList.map(sx => AGE_BUCKETS.reduce((s,b)=>s+(grid[b][sx]||0),0));
+    const grandTotal = colTotals.reduce((s,x)=>s+x,0);
+
+    c.innerHTML = `
+      <div class="stat-row" style="margin-bottom:14px;">
+        <div class="stat" style="border-top-color:var(--green)"><div class="num">${active.length}</div><div class="lbl">एकूण सक्रिय सभासद</div></div>
+        ${sexList.map(sx => `<div class="stat"><div class="num">${colTotals[sexList.indexOf(sx)]}</div><div class="lbl">${sx}</div></div>`).join('')}
+      </div>
+      <div class="panel">
+        <h3>वयोगट × लिंग — क्रॉस-टॅब</h3>
+        <div class="table-scroll">
+          <table class="data-table">
+            <thead><tr><th>वयोगट</th>${headerHtml}<th>एकूण</th></tr></thead>
+            <tbody>${bodyHtml}</tbody>
+            <tfoot><tr style="font-weight:700;border-top:2px solid var(--border);"><td>एकूण</td>${colTotals.map(t=>`<td style="text-align:right;">${t}</td>`).join('')}<td style="text-align:right;">${grandTotal}</td></tr></tfoot>
+          </table>
+        </div>
+        <p style="font-size:11px;color:#999;margin-top:10px;">* ज्या सभासदांची जन्मतारीख नोंदलेली नाही, ते "अज्ञात" वयोगटात दाखवले आहेत.</p>
+      </div>
+    `;
+  } catch(e){ c.innerHTML = errBanner('विश्लेषण त्रुटी: ' + e.message); }
+}
+
 async function renderCustomReportBuilder(c){
   const opts = Object.entries(CUSTOM_REPORT_DIMENSIONS).map(([k,v]) => `<option value="${k}">${v}</option>`).join('');
   c.innerHTML = `
@@ -2823,8 +2887,17 @@ function showReceiptForm(member){
   `);
 }
 
-function renderReceiptPrint(c, member, amount, narration, dateStr){
+async function renderReceiptPrint(c, member, amount, narration, dateStr){
   const rcptNo = 'R' + (dateStr||'').replace(/-/g,'') + '-' + Math.floor(Math.random()*900+100);
+  c.innerHTML = '<div class="empty">पावती तयार करत आहे...</div>';
+  // receipts टेबलमध्ये नोंद करतो (टेबल अस्तित्वात नसेल तर शांतपणे दुर्लक्ष — पावती तरीही दिसेल)
+  try {
+    await sbClient.from('receipts').insert({
+      receipt_no: rcptNo, member_id: member.id, amount: Number(amount),
+      narration: narration || null, issued_by: CURRENT_STAFF ? CURRENT_STAFF.id : null,
+    });
+  } catch(e) { /* receipts टेबल नसेल तरी पुढे जातो */ }
+
   c.innerHTML = `
     <div class="panel">
       <div class="print-head">
@@ -2842,11 +2915,18 @@ function renderReceiptPrint(c, member, amount, narration, dateStr){
         <tr><td style="padding:6px 0;"><b>तपशील:</b></td><td colspan="2">${narration||'-'}</td></tr>
         <tr><td style="padding:14px 0;"><b>रक्कम:</b></td><td colspan="2" style="font-size:18px;font-weight:700;">₹ ${fmtMoney(amount)}</td></tr>
       </table>
-      <div style="margin-top:60px;display:flex;justify-content:space-between;font-size:13px;">
-        <div>सभासद सही</div><div>अधिकृत सही</div>
+      <div style="margin-top:24px;display:flex;justify-content:space-between;align-items:flex-end;">
+        <div style="display:flex;justify-content:space-between;width:70%;font-size:13px;">
+          <div>सभासद सही</div><div>अधिकृत सही</div>
+        </div>
+        <div style="text-align:center;">
+          <div id="rcpt-qr"></div>
+          <div style="font-size:9px;color:#999;">पावती-सत्यापनासाठी स्कॅन करा</div>
+        </div>
       </div>
     </div>
   `;
+  if (window.QRCode){ new QRCode(document.getElementById('rcpt-qr'), { text: rcptNo, width:80, height:80 }); }
 }
 
 async function renderCertificatePrint(memberId, certType){
