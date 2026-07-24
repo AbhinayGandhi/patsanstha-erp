@@ -26,6 +26,16 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     --navy:#1B2A4A; --navy-light:#28395E; --gold:#C99A2E; --cream:#F7F5F0;
     --green:#2F6F4E; --rust:#B54834; --slate:#33363D; --border:#E3DFD5; --card:#FFFFFF;
   }
+  [data-theme="dark"]{
+    --navy:#2A3D63; --navy-light:#374A73; --gold:#D9B24F; --cream:#1A1D24;
+    --green:#4A9670; --rust:#D8664A; --slate:#E8E6E0; --border:#3A3E48; --card:#242730;
+  }
+  [data-theme="dark"] body{ background:var(--cream); color:var(--slate); }
+  [data-theme="dark"] .sidebar{ background:#141821; }
+  [data-theme="dark"] .panel, [data-theme="dark"] .stat, [data-theme="dark"] .topbar, [data-theme="dark"] .card{ background:var(--card); border-color:var(--border); }
+  [data-theme="dark"] table.data-table th{ background:#1F222B; color:var(--slate); }
+  [data-theme="dark"] input, [data-theme="dark"] select{ background:#1F222B; color:var(--slate); border-color:var(--border); }
+  .theme-toggle-btn{ background:none; border:1px solid var(--border); border-radius:6px; padding:4px 10px; cursor:pointer; color:var(--slate); font-size:13px; }
   *{box-sizing:border-box;}
   body{ margin:0; font-family:'Noto Sans Devanagari', sans-serif; background:var(--cream); color:var(--slate); }
   h1,h2,h3,.brand{ font-family:'Tiro Devanagari Marathi', serif; }
@@ -205,6 +215,9 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
       <a data-view="dataquality"><span class="ic">🩺</span> डेटा गुणवत्ता</a>
       <a data-view="cashdeposit"><span class="ic">💵</span> कॅश डिपॉझिट पडताळणी</a>
       <a data-view="loanapps"><span class="ic">📝</span> कर्ज अर्ज</a>
+      <a data-view="grievances"><span class="ic">💬</span> तक्रारी</a>
+      <a data-view="standing"><span class="ic">🔁</span> स्थायी सूचना</a>
+      <a data-view="chequebook"><span class="ic">📘</span> चेकबुक विनंत्या</a>
       <a data-view="settings"><span class="ic">⚙</span> सेटिंग्ज</a>
     </nav>
   </div>
@@ -219,6 +232,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
       <form id="global-search-form" style="display:flex;align-items:center;margin:0 10px;" onsubmit="event.preventDefault(); render('search', document.getElementById('global-search-input').value);">
         <input type="text" id="global-search-input" placeholder="🔍 सभासद / खाते / मोबाईल शोधा..." style="padding:6px 10px;border:1px solid #d8d8d8;border-radius:6px;font-size:13px;width:220px;">
       </form>
+      <button class="theme-toggle-btn" id="theme-toggle-btn" title="डार्क/लाईट मोड">🌙</button>
       <div class="staff-badge" id="staff-badge" style="display:none;"></div>
     </div>
     <div class="content" id="content"></div>
@@ -322,6 +336,18 @@ const MOCK = {
    NAV
    ========================================================= */
 const TITLES = { dashboard:'डॅशबोर्ड', members:'सभासद', savings:'बचत खाती', fd:'मुदत ठेव (FD/RD)', loans:'कर्ज खाती', pigmy:'पिग्मी (दैनिक कलेक्शन)', daybook:'व्यवहार / Day Book', reports:'रिपोर्ट्स', settings:'सेटिंग्ज' };
+/* ---------- डार्क मोड ---------- */
+(function initTheme(){
+  const saved = localStorage.getItem('erp_theme');
+  if (saved === 'dark') document.documentElement.setAttribute('data-theme','dark');
+})();
+document.getElementById('theme-toggle-btn').addEventListener('click', () => {
+  const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+  if (isDark){ document.documentElement.removeAttribute('data-theme'); localStorage.setItem('erp_theme','light'); document.getElementById('theme-toggle-btn').textContent = '🌙'; }
+  else { document.documentElement.setAttribute('data-theme','dark'); localStorage.setItem('erp_theme','dark'); document.getElementById('theme-toggle-btn').textContent = '☀️'; }
+});
+if (localStorage.getItem('erp_theme') === 'dark') document.getElementById('theme-toggle-btn').textContent = '☀️';
+
 document.getElementById('nav').addEventListener('click', (e)=>{
   const a = e.target.closest('a'); if(!a) return;
   document.querySelectorAll('#nav a').forEach(x=>x.classList.remove('active'));
@@ -399,6 +425,9 @@ async function render(view, param){
   if (view === 'dataquality') return renderDataQuality(c);
   if (view === 'cashdeposit') return renderCashDepositVerify(c);
   if (view === 'loanapps') return renderLoanApplications(c);
+  if (view === 'grievances') return renderGrievancesAdmin(c);
+  if (view === 'standing') return renderStandingInstructionsAdmin(c);
+  if (view === 'chequebook') return renderChequebookAdmin(c);
   if (view === 'search') return renderGlobalSearch(c, param);
   if (view === 'notifications') return renderNotifications(c);
   if (view === 'member360') return renderMember360(c, param);
@@ -2980,13 +3009,22 @@ async function renderCertificatePrint(memberId, certType){
   } catch(e){ c.innerHTML = errBanner('प्रमाणपत्र त्रुटी: ' + e.message); }
 }
 
+async function toggleAccountFreeze(accountId, memberId, currentlyFrozen){
+  const isFrozen = currentlyFrozen === true || currentlyFrozen === 'true';
+  const action = isFrozen ? 'अनलॉक (गोठवण उठवा)' : 'गोठवा (लॉक करा)';
+  if (!confirm(`खरंच हे खातं ${action} करायचं आहे का?`)) return;
+  const { error } = await sbClient.from('accounts').update({ is_frozen: !isFrozen }).eq('id', accountId);
+  if (error){ alert('त्रुटी: ' + error.message); return; }
+  render('member360', memberId);
+}
+
 async function renderMember360(c, memberId){
   if (!memberId){ c.innerHTML = '<div class="banner warn">सभासद निवडलेला नाही.</div>'; return; }
   c.innerHTML = '<div class="empty">लोड होत आहे...</div>';
   try {
     const [{data:member, error:mErr}, {data:accounts}, {data:shareRows}] = await Promise.all([
       sbClient.from('members').select('id,member_no,name,father_husband_name,address_line1,address_line2,address_line3,pincode,phone,mobile,email,sex,birth_date,join_date,membership_status,branches(name),castes(name),occupations(name)').eq('id', memberId).single(),
-      sbClient.from('accounts').select('id,account_no,current_balance,open_date,status,product_type,interest_rate,maturity_date').eq('member_id', memberId).order('open_date',{ascending:false}),
+      sbClient.from('accounts').select('id,account_no,current_balance,open_date,status,product_type,interest_rate,maturity_date,is_frozen').eq('member_id', memberId).order('open_date',{ascending:false}),
       sbClient.from('share_transactions').select('no_of_shares,share_value,txn_type,transfer_to_member_id,member_id').or(`member_id.eq.${memberId},transfer_to_member_id.eq.${memberId}`),
     ]);
     if (mErr || !member){ c.innerHTML = errBanner('सभासद सापडला नाही: ' + (mErr?.message||'')); return; }
@@ -3015,10 +3053,13 @@ async function renderMember360(c, memberId){
     const totalBalance = accList.reduce((s,a)=>s+Math.abs(Number(a.current_balance||0)),0);
     const accRows = accList.map(a => `
       <tr>
-        <td>${a.account_no}</td><td>${a.product_type}</td>
+        <td>${a.account_no} ${a.is_frozen ? '<span class="tag loan" style="font-size:10px;">🔒 गोठवलेलं</span>' : ''}</td><td>${a.product_type}</td>
         <td>${fmtMoney(Math.abs(Number(a.current_balance||0)))}</td>
         <td>${a.open_date||''}</td><td>${a.maturity_date||'-'}</td><td>${a.status||''}</td>
-        <td><button class="btn ghost small" onclick="renderStatement('${a.id}')">स्टेटमेंट</button></td>
+        <td>
+          <button class="btn ghost small" onclick="renderStatement('${a.id}')">स्टेटमेंट</button>
+          <button class="btn ghost small" onclick="toggleAccountFreeze('${a.id}','${memberId}',${a.is_frozen})">${a.is_frozen ? '🔓 अनलॉक' : '🔒 गोठवा'}</button>
+        </td>
       </tr>`).join('');
     const txnRows = recentTxns.map(t => `
       <tr><td>${t.txn_date}</td><td>${t.accounts?.account_no||''}</td>
@@ -3365,6 +3406,177 @@ async function renderNotifications(c){
    ========================================================= */
 /* ---------- कॅश डिपॉझिट पडताळणी (स्टाफसाठी) ---------- */
 /* ---------- कर्ज मागणी अर्ज — स्टाफसाठी मंजूर/नामंजूर ---------- */
+/* ---------- तक्रार-व्यवस्थापन (स्टाफसाठी) ---------- */
+/* ---------- स्थायी सूचना — स्टाफसाठी मॅन्युअल-कार्यान्वयन ---------- */
+/* ---------- चेकबुक विनंत्या — स्टाफसाठी ---------- */
+async function renderChequebookAdmin(c){
+  c.innerHTML = '<div class="empty">विनंत्या आणत आहे...</div>';
+  try {
+    const { data: reqs, error } = await sbClient.from('chequebook_requests')
+      .select('id,leaves,status,requested_at,issued_at,accounts!account_id(account_no),members!member_id(name,member_no,mobile)')
+      .order('requested_at', { ascending: false });
+    if (error) throw error;
+    const STATUS_LABEL = { pending:'⏳ प्रलंबित', issued:'✅ जारी झालं' };
+    const rows = (reqs||[]).map(r => `
+      <tr>
+        <td>${new Date(r.requested_at).toLocaleDateString('en-IN')}</td>
+        <td>${r.members?.name||''} (${r.members?.member_no||''})</td>
+        <td>${r.members?.mobile||''}</td>
+        <td>${r.accounts?.account_no||''}</td>
+        <td>${r.leaves}</td>
+        <td>${STATUS_LABEL[r.status]||r.status}</td>
+        <td>${r.status==='pending' ? `<button class="btn gold small" onclick="issueChequebook('${r.id}')">जारी केलं म्हणून चिन्हांकित करा</button>` : (r.issued_at ? new Date(r.issued_at).toLocaleDateString('en-IN') : '')}</td>
+      </tr>`).join('');
+    c.innerHTML = `
+      <div class="panel">
+        <h3>चेकबुक विनंत्या</h3>
+        <div class="table-scroll">
+          <table class="data-table">
+            <thead><tr><th>तारीख</th><th>सभासद</th><th>मोबाईल</th><th>खातं</th><th>पानं</th><th>स्थिती</th><th></th></tr></thead>
+            <tbody>${rows || '<tr><td colspan="7" class="empty">कुठलीही विनंती नाही.</td></tr>'}</tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  } catch(e){ c.innerHTML = errBanner('त्रुटी: ' + e.message); }
+}
+
+async function issueChequebook(id){
+  const { error } = await sbClient.from('chequebook_requests').update({
+    status: 'issued', issued_at: new Date().toISOString(), issued_by: CURRENT_STAFF ? CURRENT_STAFF.id : null,
+  }).eq('id', id);
+  if (error){ alert('त्रुटी: ' + error.message); return; }
+  render('chequebook');
+}
+
+async function renderStandingInstructionsAdmin(c){
+  c.innerHTML = '<div class="empty">सूचना आणत आहे...</div>';
+  try {
+    const today = new Date();
+    const todayDate = today.getDate();
+    const { data: sis, error } = await sbClient.from('standing_instructions')
+      .select('id,from_account_id,to_account_no,amount,day_of_month,narration,status,last_executed,accounts!from_account_id(account_no,current_balance),members!member_id(name,member_no,mobile)')
+      .eq('status', 'active').order('day_of_month');
+    if (error) throw error;
+
+    const thisMonth = today.toISOString().slice(0,7);
+    const dueToday = (sis||[]).filter(si => si.day_of_month === todayDate && (!si.last_executed || !si.last_executed.startsWith(thisMonth)));
+    const others = (sis||[]).filter(si => !dueToday.includes(si));
+
+    const rowHtml = (list, showBtn) => list.map(si => `
+      <tr>
+        <td>${si.day_of_month}</td>
+        <td>${si.members?.name||''} (${si.members?.member_no||''})</td>
+        <td>${si.accounts?.account_no||''}</td>
+        <td>${si.to_account_no}</td>
+        <td style="text-align:right;">${fmtMoney(si.amount)}</td>
+        <td>${si.narration||'-'}</td>
+        <td>${si.last_executed||'-'}</td>
+        <td>${showBtn ? `<button class="btn gold small" onclick="executeStandingInstruction('${si.id}','${si.from_account_id}','${si.to_account_no}',${si.amount})">कार्यान्वित करा</button>` : ''}</td>
+      </tr>`).join('');
+
+    c.innerHTML = `
+      <div class="panel">
+        <h3>🔁 आज कार्यान्वित करायच्या स्थायी सूचना (${dueToday.length})</h3>
+        <p style="color:#777;font-size:12.5px;">या सूचना आज (तारीख ${todayDate}) कार्यान्वित करायच्या आहेत — "कार्यान्वित करा" दाबल्यावर प्रत्यक्ष रक्कम त्या खात्याला ट्रान्सफर होईल.</p>
+        <div class="table-scroll">
+          <table class="data-table">
+            <thead><tr><th>तारीख</th><th>सभासद</th><th>कडून</th><th>कडे</th><th>रक्कम</th><th>तपशील</th><th>शेवटचं</th><th></th></tr></thead>
+            <tbody>${rowHtml(dueToday, true) || '<tr><td colspan="8" class="empty">आज कुठलीही सूचना नाही.</td></tr>'}</tbody>
+          </table>
+        </div>
+      </div>
+      <div class="panel" style="margin-top:14px;">
+        <h3>इतर सक्रिय सूचना (${others.length})</h3>
+        <div class="table-scroll">
+          <table class="data-table">
+            <thead><tr><th>तारीख</th><th>सभासद</th><th>कडून</th><th>कडे</th><th>रक्कम</th><th>तपशील</th><th>शेवटचं</th><th></th></tr></thead>
+            <tbody>${rowHtml(others, false) || '<tr><td colspan="8" class="empty">काहीही नाही.</td></tr>'}</tbody>
+          </table>
+        </div>
+      </div>
+      <div id="si-admin-status" style="margin-top:10px;"></div>
+    `;
+  } catch(e){ c.innerHTML = errBanner('त्रुटी: ' + e.message); }
+}
+
+async function executeStandingInstruction(siId, fromAccountId, toAccountNo, amount){
+  if (!confirm(`खरंच ₹${amount} ट्रान्सफर करायचे आहे का (${toAccountNo} कडे)?`)) return;
+  const statusEl = document.getElementById('si-admin-status');
+  // हेच सुरक्षित member_transfer_funds RPC वापरतो — पण ते सभासद-सेशनसाठी बनवलेलं आहे,
+  // त्यामुळे इथे स्टाफकडून थेट accounts अपडेट + transactions नोंद करतो
+  try {
+    const { data: fromAcc } = await sbClient.from('accounts').select('current_balance').eq('id', fromAccountId).single();
+    const { data: toAcc } = await sbClient.from('accounts').select('id,current_balance').eq('account_no', toAccountNo).single();
+    if (!toAcc){ statusEl.innerHTML = errBanner('प्राप्तकर्त्याचं खातं सापडलं नाही.'); return; }
+    if (Number(fromAcc.current_balance) < amount){ statusEl.innerHTML = errBanner('अपुरी शिल्लक.'); return; }
+    const newFrom = Number(fromAcc.current_balance) - amount;
+    const newTo = Number(toAcc.current_balance) + amount;
+    await sbClient.from('accounts').update({ current_balance: newFrom }).eq('id', fromAccountId);
+    await sbClient.from('accounts').update({ current_balance: newTo }).eq('id', toAcc.id);
+    await sbClient.from('transactions').insert([
+      { account_id: fromAccountId, txn_date: todayStr(), cd_flag:'D', amount, balance_after:newFrom, narration:'स्थायी सूचना → '+toAccountNo },
+      { account_id: toAcc.id, txn_date: todayStr(), cd_flag:'C', amount, balance_after:newTo, narration:'स्थायी सूचना ← ' },
+    ]);
+    await sbClient.from('standing_instructions').update({ last_executed: todayStr() }).eq('id', siId);
+    statusEl.innerHTML = `<div class="banner ok">✓ यशस्वीरित्या कार्यान्वित झालं.</div>`;
+    setTimeout(() => render('standing'), 1200);
+  } catch(e){ statusEl.innerHTML = errBanner('त्रुटी: ' + e.message); }
+}
+
+async function renderGrievancesAdmin(c, filterStatus){
+  filterStatus = filterStatus || 'open';
+  c.innerHTML = '<div class="empty">तक्रारी आणत आहे...</div>';
+  try {
+    let q = sbClient.from('grievances')
+      .select('id,subject,description,status,created_at,response,members!member_id(name,member_no,mobile)')
+      .order('created_at', { ascending: false });
+    if (filterStatus !== 'all') q = q.eq('status', filterStatus);
+    const { data: grievances, error } = await q;
+    if (error) throw error;
+
+    const STATUS_LABEL = { open:'⏳ नोंदवली', in_progress:'🔧 प्रक्रियेत', resolved:'✅ सोडवली' };
+    const rows = (grievances||[]).map(g => `
+      <tr>
+        <td>${new Date(g.created_at).toLocaleDateString('en-IN')}</td>
+        <td>${g.members?.name||''} (${g.members?.member_no||''})</td>
+        <td>${g.members?.mobile||''}</td>
+        <td>${g.subject}</td>
+        <td>${g.description||'-'}</td>
+        <td>${STATUS_LABEL[g.status]||g.status}</td>
+        <td>${g.status !== 'resolved' ? `<button class="btn gold small" onclick="resolveGrievance('${g.id}')">उत्तर देऊन सोडवा</button>` : (g.response||'-')}</td>
+      </tr>`).join('');
+
+    c.innerHTML = `
+      <div class="panel">
+        <h3>तक्रार/सूचना व्यवस्थापन</h3>
+        <div style="display:flex;gap:8px;margin-bottom:12px;">
+          <button class="btn ${filterStatus==='open'?'gold':'ghost'} small" onclick="renderGrievancesAdmin(document.getElementById('content'),'open')">नोंदवलेल्या</button>
+          <button class="btn ${filterStatus==='resolved'?'gold':'ghost'} small" onclick="renderGrievancesAdmin(document.getElementById('content'),'resolved')">सोडवलेल्या</button>
+          <button class="btn ${filterStatus==='all'?'gold':'ghost'} small" onclick="renderGrievancesAdmin(document.getElementById('content'),'all')">सगळ्या</button>
+        </div>
+        <div class="table-scroll">
+          <table class="data-table">
+            <thead><tr><th>तारीख</th><th>सभासद</th><th>मोबाईल</th><th>विषय</th><th>तपशील</th><th>स्थिती</th><th></th></tr></thead>
+            <tbody>${rows || '<tr><td colspan="7" class="empty">काहीही सापडलं नाही.</td></tr>'}</tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  } catch(e){ c.innerHTML = errBanner('त्रुटी: ' + e.message); }
+}
+
+async function resolveGrievance(id){
+  const response = prompt('उत्तर/सोडवणूक टीप लिहा:');
+  if (response === null) return;
+  const { error } = await sbClient.from('grievances').update({
+    status: 'resolved', response, resolved_at: new Date().toISOString(),
+    handled_by: CURRENT_STAFF ? CURRENT_STAFF.id : null,
+  }).eq('id', id);
+  if (error){ alert('त्रुटी: ' + error.message); return; }
+  render('grievances');
+}
+
 async function renderLoanApplications(c, filterStatus){
   filterStatus = filterStatus || 'pending';
   c.innerHTML = '<div class="empty">अर्ज आणत आहे...</div>';
