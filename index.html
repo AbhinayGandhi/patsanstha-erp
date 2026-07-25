@@ -21,6 +21,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 </script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 <style>
   :root{
     --navy:#1B2A4A; --navy-light:#28395E; --gold:#C99A2E; --cream:#F7F5F0;
@@ -3731,27 +3732,97 @@ async function reviewLoanApplication(appId, decision){
 }
 
 let CDV_REQS = {}; // requestId -> request row (denomination पडताळणीसाठी कॅशे)
+let ccScannerStream = null, ccScannerLoopId = null;
+async function startCcQrScanner(){
+  const box = document.getElementById('cc-scanner-box');
+  const msgEl = document.getElementById('cc-scan-msg');
+  if (!box) return;
+  box.innerHTML = `
+    <video id="cc-scanner-video" style="width:100%;max-width:360px;border-radius:8px;" playsinline muted></video>
+    <canvas id="cc-scanner-canvas" style="display:none;"></canvas><br>
+    <button class="btn ghost small" id="cc-scanner-cancel" style="margin-top:6px;">बंद करा</button>
+  `;
+  box.style.display = '';
+  if (msgEl) msgEl.innerHTML = '';
+  const video = document.getElementById('cc-scanner-video');
+  const canvas = document.getElementById('cc-scanner-canvas');
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+    if (msgEl) msgEl.innerHTML = errBanner('हा ब्राउझर/पान कॅमेरा वापरण्यास सक्षम नाही (हे पान https:// वरून उघडलेलं आहे का तपासा).');
+    box.style.display = 'none';
+    return;
+  }
+  try {
+    ccScannerStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+  } catch(e){
+    if (msgEl) msgEl.innerHTML = errBanner('कॅमेरा उघडता आला नाही: ' + e.message);
+    box.style.display = 'none';
+    return;
+  }
+  video.srcObject = ccScannerStream;
+  video.play();
+  document.getElementById('cc-scanner-cancel').onclick = stopCcQrScanner;
+  const ctx = canvas.getContext('2d');
+  const tick = () => {
+    if (!ccScannerStream) return;
+    if (video.readyState === video.HAVE_ENOUGH_DATA){
+      canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const code = jsQR(imageData.data, imageData.width, imageData.height);
+      if (code && code.data){
+        handleCcQrResult(code.data.trim());
+        stopCcQrScanner();
+        return;
+      }
+    }
+    ccScannerLoopId = requestAnimationFrame(tick);
+  };
+  ccScannerLoopId = requestAnimationFrame(tick);
+}
+function stopCcQrScanner(){
+  if (ccScannerLoopId) cancelAnimationFrame(ccScannerLoopId);
+  ccScannerLoopId = null;
+  if (ccScannerStream){ ccScannerStream.getTracks().forEach(t => t.stop()); ccScannerStream = null; }
+  const box = document.getElementById('cc-scanner-box');
+  if (box) box.style.display = 'none';
+}
+function handleCcQrResult(raw){
+  const msgEl = document.getElementById('cc-scan-msg');
+  let parsed;
+  try { parsed = JSON.parse(raw); } catch(e){ parsed = null; }
+  const reqId = parsed && parsed.id;
+  if (!reqId || !CDV_REQS[reqId]){
+    if (msgEl) msgEl.innerHTML = '<div class="banner warn">⚠ ही विनंती प्रलंबित यादीत सापडली नाही — ती आधीच पडताळली गेली असेल किंवा जुनी असेल. यादी रिफ्रेश करून पुन्हा प्रयत्न करा.</div>';
+    return;
+  }
+  if (msgEl) msgEl.innerHTML = `<div class="banner ok">✓ विनंती सापडली — Txn ID: ${CDV_REQS[reqId].transaction_id||'-'}. आता सभासदाने सांगितलेला OTP त्याच ओळीत टाका.</div>`;
+  const row = document.getElementById('denom-row-' + reqId);
+  if (row && row.style.display === 'none') toggleDenomDetail(reqId);
+  const otpInput = document.getElementById('otp-' + reqId);
+  if (otpInput){ otpInput.scrollIntoView({behavior:'smooth', block:'center'}); otpInput.focus(); }
+}
 async function renderCashDepositVerify(c){
   c.innerHTML = '<div class="empty">प्रलंबित विनंत्या आणत आहे...</div>';
   try {
     const { data: reqs, error } = await sbClient.from('cash_deposit_requests')
-      .select('id,amount,status,created_at,denomination,accounts!account_id(account_no),members!member_id(name,member_no,mobile)')
+      .select('id,amount,status,created_at,denomination,transaction_id,purpose,remarks,accounts!account_id(account_no),members!member_id(name,member_no,mobile),branches!branch_id(name)')
       .eq('status', 'pending').order('created_at', { ascending: false });
     if (error) throw error;
     CDV_REQS = {}; (reqs||[]).forEach(r => CDV_REQS[r.id] = r);
     const rows = (reqs||[]).map(r => `
       <tr>
         <td>${new Date(r.created_at).toLocaleString('en-IN')}</td>
+        <td>${r.transaction_id||'-'}</td>
         <td>${r.members?.name||''} (${r.members?.member_no||''})</td>
         <td>${r.members?.mobile||''}</td>
         <td>${r.accounts?.account_no||''}</td>
         <td style="text-align:right;">${fmtMoney(r.amount)}</td>
-        <td><button class="btn ghost small" onclick="toggleDenomDetail('${r.id}')" id="denom-toggle-btn-${r.id}">नोटा/नाणी तपशील ▾</button></td>
+        <td><button class="btn ghost small" onclick="toggleDenomDetail('${r.id}')" id="denom-toggle-btn-${r.id}">तपशील ▾</button></td>
         <td><input type="text" maxlength="6" placeholder="OTP" id="otp-${r.id}" style="width:80px;padding:5px;"></td>
         <td><button class="btn gold small" onclick="verifyCashDeposit('${r.id}')">पडताळा</button></td>
       </tr>
       <tr id="denom-row-${r.id}" style="display:none;">
-        <td colspan="8" style="background:#faf8f2;padding:12px;">
+        <td colspan="9" style="background:#faf8f2;padding:12px;">
           <div id="denom-content-${r.id}"></div>
         </td>
       </tr>`).join('');
@@ -3759,10 +3830,13 @@ async function renderCashDepositVerify(c){
       <div class="panel">
         <h3>कॅश डिपॉझिट पडताळणी</h3>
         <p style="color:#777;font-size:12.5px;">सभासदाने सांगितलेल्या नोटा/नाणी तपशिलाशी काउंटरवरील प्रत्यक्ष रोख मोजून पडताळा (उजवीकडे "प्रत्यक्ष मोजणी" रकाने भरा), मग OTP टाकून "पडताळा" दाबा — खात्यात रक्कम आपोआप जमा होईल.</p>
+        <button class="btn ghost small" onclick="startCcQrScanner()">📷 सभासदाचा QR स्कॅन करा</button>
+        <div id="cc-scanner-box" style="display:none;margin-top:10px;text-align:center;"></div>
+        <div id="cc-scan-msg" style="margin:8px 0;"></div>
         <div class="table-scroll">
           <table class="data-table">
-            <thead><tr><th>विनंती वेळ</th><th>सभासद</th><th>मोबाईल</th><th>खाते क्र</th><th>रक्कम</th><th>नोटा/नाणी</th><th>OTP</th><th></th></tr></thead>
-            <tbody>${rows || '<tr><td colspan="8" class="empty">कोणतीही प्रलंबित विनंती नाही.</td></tr>'}</tbody>
+            <thead><tr><th>विनंती वेळ</th><th>Txn ID</th><th>सभासद</th><th>मोबाईल</th><th>खाते क्र</th><th>रक्कम</th><th>तपशील</th><th>OTP</th><th></th></tr></thead>
+            <tbody>${rows || '<tr><td colspan="9" class="empty">कोणतीही प्रलंबित विनंती नाही.</td></tr>'}</tbody>
           </table>
         </div>
         <div id="cdv-status" style="margin-top:10px;"></div>
@@ -3777,13 +3851,17 @@ function toggleDenomDetail(id){
   if (!row) return;
   const opening = (row.style.display === 'none');
   row.style.display = opening ? '' : 'none';
-  if (btn) btn.textContent = opening ? 'नोटा/नाणी तपशील ▴' : 'नोटा/नाणी तपशील ▾';
+  if (btn) btn.textContent = opening ? 'तपशील ▴' : 'तपशील ▾';
   if (opening && !row.dataset.built){
     const r = CDV_REQS[id];
     const memberTable = renderDenomTable('mem-'+id, r.denomination || []);
     const staffPrefix = 'stf-' + id;
     window['onDenomTotalChange_' + staffPrefix] = (staffTotal) => checkDenomMatch(id, staffTotal);
     document.getElementById('denom-content-' + id).innerHTML = `
+      <div style="font-size:12.5px;color:#555;margin-bottom:10px;">
+        <b>हेतू:</b> ${r.purpose||'-'} &nbsp; | &nbsp; <b>शाखा:</b> ${r.branches?.name||'-'}
+        ${r.remarks ? ` &nbsp; | &nbsp; <b>टिप्पणी:</b> ${r.remarks}` : ''}
+      </div>
       <div style="display:flex;gap:18px;flex-wrap:wrap;">
         <div style="flex:1;min-width:260px;">
           <div style="font-weight:700;font-size:13px;margin-bottom:4px;">सभासदाने सांगितलेले (डिपॉझिट विनंतीनुसार)</div>
@@ -3818,16 +3896,23 @@ async function verifyCashDeposit(requestId){
   const statusEl = document.getElementById('cdv-status');
   const otp = otpInput.value.trim();
   if (!otp || otp.length !== 6){ statusEl.innerHTML = '<div class="banner warn">बरोबर ६-अंकी OTP टाका.</div>'; return; }
-  // जर स्टाफने प्रत्यक्ष मोजणी भरली असेल आणि ती जुळत नसेल, तर पुढे जाण्याआधी खात्री विचारतो
+  // स्टाफने प्रत्यक्ष नोटा/नाणी मोजून भरणे व ते सभासदाच्या सांगितलेल्या रकमेशी जुळणे — सक्तीचे
   const staffPrefix = 'stf-' + requestId;
   const staffTotalEl = document.getElementById(staffPrefix + '-grand');
-  if (staffTotalEl){
-    const staffTotal = collectDenomBreakdown(staffPrefix).total;
-    const r = CDV_REQS[requestId];
-    if (staffTotal > 0 && r && staffTotal !== Number(r.amount||0)){
-      const proceed = confirm(`⚠ प्रत्यक्ष मोजणी (${fmtMoney(staffTotal)}) आणि सभासदाने सांगितलेली रक्कम (${fmtMoney(r.amount)}) जुळत नाही. तरीही पुढे जायचं का?`);
-      if (!proceed) return;
-    }
+  if (!staffTotalEl){
+    statusEl.innerHTML = '<div class="banner warn">⚠ आधी "तपशील" उघडून काउंटरवरील प्रत्यक्ष नोटा/नाणी मोजणी भरा, मगच पडताळणी करता येईल.</div>';
+    toggleDenomDetail(requestId);
+    return;
+  }
+  const staffTotal = collectDenomBreakdown(staffPrefix).total;
+  const r = CDV_REQS[requestId];
+  if (staffTotal <= 0){
+    statusEl.innerHTML = '<div class="banner warn">⚠ काउंटरवरील प्रत्यक्ष नोटा/नाणी मोजणी भरल्याशिवाय पडताळणी करता येणार नाही.</div>';
+    return;
+  }
+  if (r && staffTotal !== Number(r.amount||0)){
+    statusEl.innerHTML = `<div class="banner warn">⚠ जुळत नाही — सभासदाने सांगितलेली रक्कम ${fmtMoney(r.amount)}, प्रत्यक्ष मोजणी ${fmtMoney(staffTotal)}. फरक: ${fmtMoney(Math.abs(Number(r.amount)-staffTotal))}. कृपया पुन्हा मोजून बरोबर संख्या भरा — जुळल्याशिवाय पडताळणी करता येणार नाही.</div>`;
+    return;
   }
   const { data, error } = await sbClient.rpc('verify_cash_deposit', { p_request_id: requestId, p_otp: otp });
   if (error){ statusEl.innerHTML = errBanner('त्रुटी: ' + error.message); return; }
