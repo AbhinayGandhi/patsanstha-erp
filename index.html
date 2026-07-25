@@ -3801,15 +3801,9 @@ function handleCcQrResult(raw){
   const otpInput = document.getElementById('otp-' + reqId);
   if (otpInput){ otpInput.scrollIntoView({behavior:'smooth', block:'center'}); otpInput.focus(); }
 }
-async function renderCashDepositVerify(c){
-  c.innerHTML = '<div class="empty">प्रलंबित विनंत्या आणत आहे...</div>';
-  try {
-    const { data: reqs, error } = await sbClient.from('cash_deposit_requests')
-      .select('id,amount,status,created_at,denomination,transaction_id,purpose,remarks,accounts!account_id(account_no),members!member_id(name,member_no,mobile),branches!branch_id(name)')
-      .eq('status', 'pending').order('created_at', { ascending: false });
-    if (error) throw error;
-    CDV_REQS = {}; (reqs||[]).forEach(r => CDV_REQS[r.id] = r);
-    const rows = (reqs||[]).map(r => `
+let CDV_ALL_REQS = []; // सगळ्या प्रलंबित विनंत्या (शोधण्यासाठी कॅशे)
+function cdvRowsHtml(list){
+  return (list||[]).map(r => `
       <tr>
         <td>${new Date(r.created_at).toLocaleString('en-IN')}</td>
         <td>${r.transaction_id||'-'}</td>
@@ -3826,17 +3820,44 @@ async function renderCashDepositVerify(c){
           <div id="denom-content-${r.id}"></div>
         </td>
       </tr>`).join('');
+}
+function cdvApplySearch(){
+  const q = (document.getElementById('cdv-search')?.value || '').trim().toLowerCase();
+  const tbody = document.getElementById('cdv-tbody');
+  if (!tbody) return;
+  if (!q){ tbody.innerHTML = cdvRowsHtml(CDV_ALL_REQS) || '<tr><td colspan="9" class="empty">कोणतीही प्रलंबित विनंती नाही.</td></tr>'; return; }
+  const filtered = CDV_ALL_REQS.filter(r =>
+    (r.transaction_id||'').toLowerCase().includes(q) ||
+    (r.members?.member_no||'').toLowerCase().includes(q) ||
+    (r.members?.name||'').toLowerCase().includes(q) ||
+    (r.members?.mobile||'').includes(q) ||
+    (r.otp||'') === q
+  );
+  tbody.innerHTML = cdvRowsHtml(filtered) || '<tr><td colspan="9" class="empty">शोधाशी जुळणारी विनंती सापडली नाही.</td></tr>';
+}
+async function renderCashDepositVerify(c){
+  c.innerHTML = '<div class="empty">प्रलंबित विनंत्या आणत आहे...</div>';
+  try {
+    const { data: reqs, error } = await sbClient.from('cash_deposit_requests')
+      .select('id,amount,status,created_at,denomination,transaction_id,purpose,remarks,otp,accounts!account_id(account_no),members!member_id(name,member_no,mobile),branches!branch_id(name)')
+      .eq('status', 'pending').order('created_at', { ascending: false });
+    if (error) throw error;
+    CDV_REQS = {}; (reqs||[]).forEach(r => CDV_REQS[r.id] = r);
+    CDV_ALL_REQS = reqs || [];
     c.innerHTML = `
       <div class="panel">
         <h3>कॅश डिपॉझिट पडताळणी</h3>
         <p style="color:#777;font-size:12.5px;">सभासदाने सांगितलेल्या नोटा/नाणी तपशिलाशी काउंटरवरील प्रत्यक्ष रोख मोजून पडताळा (उजवीकडे "प्रत्यक्ष मोजणी" रकाने भरा), मग OTP टाकून "पडताळा" दाबा — खात्यात रक्कम आपोआप जमा होईल.</p>
-        <button class="btn ghost small" onclick="startCcQrScanner()">📷 सभासदाचा QR स्कॅन करा</button>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px;">
+          <input type="text" id="cdv-search" placeholder="Transaction ID / OTP / सभासद क्र / नाव / मोबाईलने शोधा" oninput="cdvApplySearch()" style="flex:1;min-width:220px;padding:8px;border:1px solid #d8d8d8;border-radius:6px;">
+          <button class="btn ghost small" onclick="startCcQrScanner()">📷 सभासदाचा QR स्कॅन करा</button>
+        </div>
         <div id="cc-scanner-box" style="display:none;margin-top:10px;text-align:center;"></div>
         <div id="cc-scan-msg" style="margin:8px 0;"></div>
         <div class="table-scroll">
           <table class="data-table">
             <thead><tr><th>विनंती वेळ</th><th>Txn ID</th><th>सभासद</th><th>मोबाईल</th><th>खाते क्र</th><th>रक्कम</th><th>तपशील</th><th>OTP</th><th></th></tr></thead>
-            <tbody>${rows || '<tr><td colspan="9" class="empty">कोणतीही प्रलंबित विनंती नाही.</td></tr>'}</tbody>
+            <tbody id="cdv-tbody">${cdvRowsHtml(reqs) || '<tr><td colspan="9" class="empty">कोणतीही प्रलंबित विनंती नाही.</td></tr>'}</tbody>
           </table>
         </div>
         <div id="cdv-status" style="margin-top:10px;"></div>
