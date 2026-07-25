@@ -94,6 +94,88 @@ let CURRENT_MEMBER = null;
 function synthEmail(memberNo){ return `m${memberNo}@patsanstha.internal`; }
 function fmtMoney(n){ return '₹' + Number(n||0).toLocaleString('en-IN', {maximumFractionDigits:2}); }
 
+/* ---------- नोटा/नाणी मोजणी (Denomination) — कॅश डिपॉझिटसाठी ---------- */
+const DENOM_LIST = [
+  {key:'d2000', label:'₹2000 (नोट)', value:2000},
+  {key:'d500', label:'₹500 (नोट)', value:500},
+  {key:'d200', label:'₹200 (नोट)', value:200},
+  {key:'d100', label:'₹100 (नोट)', value:100},
+  {key:'d50', label:'₹50 (नोट)', value:50},
+  {key:'d20', label:'₹20 (नोट)', value:20},
+  {key:'d10n', label:'₹10 (नोट)', value:10},
+  {key:'d10c', label:'₹10 (नाणे)', value:10},
+  {key:'d5', label:'₹5 (नाणे)', value:5},
+  {key:'d2', label:'₹2 (नाणे)', value:2},
+  {key:'d1', label:'₹1 (नाणे)', value:1},
+];
+const MR_ONES = ['शून्य','एक','दोन','तीन','चार','पाच','सहा','सात','आठ','नऊ','दहा',
+  'अकरा','बारा','तेरा','चौदा','पंधरा','सोळा','सतरा','अठरा','एकोणीस','वीस',
+  'एकवीस','बावीस','तेवीस','चोवीस','पंचवीस','सव्वीस','सत्तावीस','अठ्ठावीस','एकोणतीस','तीस',
+  'एकतीस','बत्तीस','तेहेतीस','चौतीस','पस्तीस','छत्तीस','सदतीस','अडतीस','एकोणचाळीस','चाळीस',
+  'एक्केचाळीस','बेचाळीस','त्रेचाळीस','चव्वेचाळीस','पंचेचाळीस','सेहेचाळीस','सत्तेचाळीस','अठ्ठेचाळीस','एकोणपन्नास','पन्नास',
+  'एक्कावन्न','बावन्न','त्रेपन्न','चोपन्न','पंचावन्न','छप्पन्न','सत्तावन्न','अठ्ठावन्न','एकोणसाठ','साठ',
+  'एकसष्ठ','बासष्ठ','त्रेसष्ठ','चौसष्ठ','पासष्ठ','सहासष्ठ','सदुसष्ठ','अडुसष्ठ','एकोणसत्तर','सत्तर',
+  'एक्काहत्तर','बाहत्तर','त्र्याहत्तर','चौर्‍याहत्तर','पंच्याहत्तर','शहात्तर','सत्याहत्तर','अठ्ठ्याहत्तर','एकोणऐंशी','ऐंशी',
+  'एक्क्याऐंशी','ब्याऐंशी','त्र्याऐंशी','चौऱ्याऐंशी','पंच्याऐंशी','शहाऐंशी','सत्त्याऐंशी','अठ्ठ्याऐंशी','एकोणनव्वद','नव्वद',
+  'एक्क्याण्णव','ब्याण्णव','त्र्याण्णव','चौऱ्याण्णव','पंच्याण्णव','शहाण्णव','सत्त्याण्णव','अठ्ठ्याण्णव','नव्याण्णव'];
+function amountToMarathiWords(num){
+  num = Math.round(Number(num||0));
+  if (num <= 0) return 'शून्य रुपये फक्त';
+  let n = num;
+  const crore = Math.floor(n/10000000); n %= 10000000;
+  const lakh = Math.floor(n/100000); n %= 100000;
+  const thousand = Math.floor(n/1000); n %= 1000;
+  const hundred = Math.floor(n/100); n %= 100;
+  const rest = n;
+  let parts = [];
+  if (crore) parts.push(MR_ONES[crore] + ' कोटी');
+  if (lakh) parts.push(MR_ONES[lakh] + ' लाख');
+  if (thousand) parts.push(MR_ONES[thousand] + ' हजार');
+  if (hundred) parts.push(hundred===1 ? 'शंभर' : (MR_ONES[hundred] + 'शे'));
+  if (rest) parts.push(MR_ONES[rest]);
+  return parts.join(' ') + ' रुपये फक्त';
+}
+function renderDenomTable(idPrefix){
+  const rows = DENOM_LIST.map(d => `<tr>
+      <td>${d.label}</td>
+      <td><input type="number" min="0" id="${idPrefix}-${d.key}" placeholder="0" oninput="updateDenomTotal('${idPrefix}')" style="width:80px;padding:5px;text-align:right;"></td>
+      <td style="text-align:right;" id="${idPrefix}-${d.key}-sub">₹0</td>
+    </tr>`).join('');
+  return `
+    <table class="data-table" style="margin-top:6px;width:100%;font-size:12.5px;">
+      <thead><tr><th>दर्शनी किंमत</th><th>नग (संख्या)</th><th>उप-बेरीज</th></tr></thead>
+      <tbody>${rows}</tbody>
+      <tfoot><tr><td colspan="2" style="text-align:right;font-weight:700;">एकूण (अंकी)</td><td style="text-align:right;font-weight:700;" id="${idPrefix}-grand">₹0</td></tr></tfoot>
+    </table>
+    <div style="font-size:11.5px;color:#777;margin-top:4px;" id="${idPrefix}-words">एकूण (अक्षरी): शून्य रुपये फक्त</div>
+  `;
+}
+function updateDenomTotal(idPrefix){
+  let total = 0;
+  DENOM_LIST.forEach(d => {
+    const inp = document.getElementById(`${idPrefix}-${d.key}`);
+    const cnt = Number(inp && inp.value || 0);
+    const sub = cnt * d.value;
+    total += sub;
+    const subEl = document.getElementById(`${idPrefix}-${d.key}-sub`);
+    if (subEl) subEl.textContent = fmtMoney(sub);
+  });
+  const grandEl = document.getElementById(`${idPrefix}-grand`);
+  if (grandEl) grandEl.textContent = fmtMoney(total);
+  const wordsEl = document.getElementById(`${idPrefix}-words`);
+  if (wordsEl) wordsEl.textContent = 'एकूण (अक्षरी): ' + amountToMarathiWords(total);
+  return total;
+}
+function collectDenomBreakdown(idPrefix){
+  const items = []; let total = 0;
+  DENOM_LIST.forEach(d => {
+    const inp = document.getElementById(`${idPrefix}-${d.key}`);
+    const cnt = Number(inp && inp.value || 0);
+    if (cnt > 0){ const sub = cnt*d.value; total += sub; items.push({label:d.label, value:d.value, count:cnt, subtotal:sub}); }
+  });
+  return { items, total };
+}
+
 /* ---------- डार्क मोड ---------- */
 (function initTheme(){
   const saved = localStorage.getItem('portal_theme');
@@ -819,11 +901,11 @@ async function renderCashDepositRequest(){
   c.innerHTML = `
     <div class="card">
       <h2 style="text-align:center;margin-top:0;">💵 कॅश डिपॉझिट</h2>
-      <p style="font-size:12.5px;color:#777;text-align:center;">रक्कम व खातं निवडा — एक OTP मिळेल, तो कॅश-काउंटरवर सांगून पैसे जमा करा.</p>
+      <p style="font-size:12.5px;color:#777;text-align:center;">खातं निवडा, तुमच्याकडील नोटा/नाणी मोजून त्यांची संख्या खाली भरा — एकूण रक्कम आपोआप मोजली जाईल. नंतर मिळणारा OTP कॅश-काउंटरवर सांगून पैसे जमा करा.</p>
       ${!accounts || !accounts.length ? '<div class="empty">डिपॉझिटसाठी योग्य (बचत/पिग्मी) सक्रिय खातं सापडलं नाही.</div>' : `
         <div class="field"><label>कोणत्या खात्यात</label><select id="cd-account">${opts}</select></div>
-        <div class="field"><label>रक्कम</label><input id="cd-amount" type="number" placeholder="0"></div>
-        <button class="btn gold" id="cd-request-btn">OTP मिळवा</button>
+        <div class="field"><label>नोटा / नाणी मोजणी</label>${renderDenomTable('cd')}</div>
+        <button class="btn gold" id="cd-request-btn" style="margin-top:12px;">OTP मिळवा</button>
       `}
       <div class="err" id="cd-err"></div>
       <div id="cd-otp-box"></div>
@@ -834,12 +916,12 @@ async function renderCashDepositRequest(){
     const errEl = document.getElementById('cd-err');
     errEl.textContent = '';
     const accountId = document.getElementById('cd-account').value;
-    const amount = Number(document.getElementById('cd-amount').value);
-    if (!amount || amount <= 0){ errEl.textContent = 'बरोबर रक्कम टाका.'; return; }
+    const { items, total } = collectDenomBreakdown('cd');
+    if (!total || total <= 0){ errEl.textContent = 'किमान एका दर्शनी किमतीच्या नोटा/नाण्यांची संख्या भरा.'; return; }
     btn.disabled = true; btn.textContent = 'तयार करत आहे...';
     const otp = String(Math.floor(100000 + Math.random()*900000));
     const { data, error } = await sb.from('cash_deposit_requests')
-      .insert({ account_id: accountId, member_id: CURRENT_MEMBER.id, amount, otp })
+      .insert({ account_id: accountId, member_id: CURRENT_MEMBER.id, amount: total, otp, denomination: items })
       .select('id').single();
     btn.disabled = false; btn.textContent = 'OTP मिळवा';
     if (error){ errEl.textContent = 'त्रुटी: ' + error.message; return; }
@@ -847,9 +929,10 @@ async function renderCashDepositRequest(){
       <div style="background:var(--cream);border-radius:8px;padding:18px;text-align:center;margin-top:14px;">
         <div style="font-size:12px;color:#777;">हा OTP कॅश-काउंटरवर सांगा</div>
         <div style="font-size:32px;font-weight:700;color:var(--navy);letter-spacing:4px;">${otp}</div>
-        <div style="font-size:12px;color:#777;margin-top:6px;">रक्कम: ${fmtMoney(amount)}</div>
+        <div style="font-size:12px;color:#777;margin-top:6px;">एकूण रक्कम (अंकी): ${fmtMoney(total)}</div>
+        <div style="font-size:12px;color:#777;">एकूण रक्कम (अक्षरी): ${amountToMarathiWords(total)}</div>
       </div>
-      <p style="font-size:11px;color:#999;margin-top:10px;text-align:center;">काउंटरवर पैसे मोजून OTP सांगितल्यावरच खात्यात जमा होईल.</p>
+      <p style="font-size:11px;color:#999;margin-top:10px;text-align:center;">काउंटरवर पैसे मोजून, तुम्ही भरलेली नोटा/नाणी संख्या पडताळून, OTP सांगितल्यावरच खात्यात जमा होईल.</p>
     `;
   });
 }
