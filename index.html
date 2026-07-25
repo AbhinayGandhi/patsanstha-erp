@@ -374,6 +374,98 @@ const PRODUCT_TAG = {
   pigmy:'<span class="tag pigmy">पिग्मी</span>', other:'<span class="tag other">इतर</span>',
 };
 function fmtMoney(n){ return '₹' + Number(n||0).toLocaleString('en-IN'); }
+
+/* ---------- नोटा/नाणी मोजणी (Denomination) — कॅश डिपॉझिट पडताळणीसाठी ---------- */
+const DENOM_LIST = [
+  {key:'d2000', label:'₹2000 (नोट)', value:2000},
+  {key:'d500', label:'₹500 (नोट)', value:500},
+  {key:'d200', label:'₹200 (नोट)', value:200},
+  {key:'d100', label:'₹100 (नोट)', value:100},
+  {key:'d50', label:'₹50 (नोट)', value:50},
+  {key:'d20', label:'₹20 (नोट)', value:20},
+  {key:'d10n', label:'₹10 (नोट)', value:10},
+  {key:'d10c', label:'₹10 (नाणे)', value:10},
+  {key:'d5', label:'₹5 (नाणे)', value:5},
+  {key:'d2', label:'₹2 (नाणे)', value:2},
+  {key:'d1', label:'₹1 (नाणे)', value:1},
+];
+const MR_ONES = ['शून्य','एक','दोन','तीन','चार','पाच','सहा','सात','आठ','नऊ','दहा',
+  'अकरा','बारा','तेरा','चौदा','पंधरा','सोळा','सतरा','अठरा','एकोणीस','वीस',
+  'एकवीस','बावीस','तेवीस','चोवीस','पंचवीस','सव्वीस','सत्तावीस','अठ्ठावीस','एकोणतीस','तीस',
+  'एकतीस','बत्तीस','तेहेतीस','चौतीस','पस्तीस','छत्तीस','सदतीस','अडतीस','एकोणचाळीस','चाळीस',
+  'एक्केचाळीस','बेचाळीस','त्रेचाळीस','चव्वेचाळीस','पंचेचाळीस','सेहेचाळीस','सत्तेचाळीस','अठ्ठेचाळीस','एकोणपन्नास','पन्नास',
+  'एक्कावन्न','बावन्न','त्रेपन्न','चोपन्न','पंचावन्न','छप्पन्न','सत्तावन्न','अठ्ठावन्न','एकोणसाठ','साठ',
+  'एकसष्ठ','बासष्ठ','त्रेसष्ठ','चौसष्ठ','पासष्ठ','सहासष्ठ','सदुसष्ठ','अडुसष्ठ','एकोणसत्तर','सत्तर',
+  'एक्काहत्तर','बाहत्तर','त्र्याहत्तर','चौर्‍याहत्तर','पंच्याहत्तर','शहात्तर','सत्याहत्तर','अठ्ठ्याहत्तर','एकोणऐंशी','ऐंशी',
+  'एक्क्याऐंशी','ब्याऐंशी','त्र्याऐंशी','चौऱ्याऐंशी','पंच्याऐंशी','शहाऐंशी','सत्त्याऐंशी','अठ्ठ्याऐंशी','एकोणनव्वद','नव्वद',
+  'एक्क्याण्णव','ब्याण्णव','त्र्याण्णव','चौऱ्याण्णव','पंच्याण्णव','शहाण्णव','सत्त्याण्णव','अठ्ठ्याण्णव','नव्याण्णव'];
+function amountToMarathiWords(num){
+  num = Math.round(Number(num||0));
+  if (num <= 0) return 'शून्य रुपये फक्त';
+  let n = num;
+  const crore = Math.floor(n/10000000); n %= 10000000;
+  const lakh = Math.floor(n/100000); n %= 100000;
+  const thousand = Math.floor(n/1000); n %= 1000;
+  const hundred = Math.floor(n/100); n %= 100;
+  const rest = n;
+  let parts = [];
+  if (crore) parts.push(MR_ONES[crore] + ' कोटी');
+  if (lakh) parts.push(MR_ONES[lakh] + ' लाख');
+  if (thousand) parts.push(MR_ONES[thousand] + ' हजार');
+  if (hundred) parts.push(hundred===1 ? 'शंभर' : (MR_ONES[hundred] + 'शे'));
+  if (rest) parts.push(MR_ONES[rest]);
+  return parts.join(' ') + ' रुपये फक्त';
+}
+/* नोटा/नाणी मोजणी टेबल तयार करतो (idPrefix नुसार वेगवेगळे इनपुट-आयडी) */
+function renderDenomTable(idPrefix, readOnlyData){
+  const rows = DENOM_LIST.map(d => {
+    if (readOnlyData){
+      const found = (readOnlyData||[]).find(x=>x.label===d.label);
+      const cnt = found ? found.count : 0;
+      if (!cnt) return '';
+      return `<tr><td>${d.label}</td><td style="text-align:right;">${cnt}</td><td style="text-align:right;">${fmtMoney(cnt*d.value)}</td></tr>`;
+    }
+    return `<tr>
+      <td>${d.label}</td>
+      <td><input type="number" min="0" id="${idPrefix}-${d.key}" placeholder="0" oninput="updateDenomTotal('${idPrefix}')" style="width:80px;padding:5px;text-align:right;"></td>
+      <td style="text-align:right;" id="${idPrefix}-${d.key}-sub">₹0</td>
+    </tr>`;
+  }).join('');
+  return `
+    <table class="data-table" style="margin-top:6px;">
+      <thead><tr><th>दर्शनी किंमत</th><th>नग (संख्या)</th><th>उप-बेरीज</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="3" class="empty">तपशील नाही.</td></tr>'}</tbody>
+      <tfoot><tr><td colspan="2" style="text-align:right;font-weight:700;">एकूण (अंकी)</td><td style="text-align:right;font-weight:700;" id="${idPrefix}-grand">${readOnlyData? fmtMoney((readOnlyData||[]).reduce((s,x)=>s+Number(x.subtotal||0),0)) : '₹0'}</td></tr></tfoot>
+    </table>
+    ${readOnlyData ? `<div style="font-size:12px;color:#777;margin-top:4px;">एकूण (अक्षरी): ${amountToMarathiWords((readOnlyData||[]).reduce((s,x)=>s+Number(x.subtotal||0),0))}</div>` : `<div style="font-size:12px;color:#777;margin-top:4px;" id="${idPrefix}-words">एकूण (अक्षरी): शून्य रुपये फक्त</div>`}
+  `;
+}
+function updateDenomTotal(idPrefix){
+  let total = 0;
+  DENOM_LIST.forEach(d => {
+    const inp = document.getElementById(`${idPrefix}-${d.key}`);
+    const cnt = Number(inp && inp.value || 0);
+    const sub = cnt * d.value;
+    total += sub;
+    const subEl = document.getElementById(`${idPrefix}-${d.key}-sub`);
+    if (subEl) subEl.textContent = fmtMoney(sub);
+  });
+  const grandEl = document.getElementById(`${idPrefix}-grand`);
+  if (grandEl) grandEl.textContent = fmtMoney(total);
+  const wordsEl = document.getElementById(`${idPrefix}-words`);
+  if (wordsEl) wordsEl.textContent = 'एकूण (अक्षरी): ' + amountToMarathiWords(total);
+  if (typeof window['onDenomTotalChange_'+idPrefix] === 'function') window['onDenomTotalChange_'+idPrefix](total);
+  return total;
+}
+function collectDenomBreakdown(idPrefix){
+  const items = []; let total = 0;
+  DENOM_LIST.forEach(d => {
+    const inp = document.getElementById(`${idPrefix}-${d.key}`);
+    const cnt = Number(inp && inp.value || 0);
+    if (cnt > 0){ const sub = cnt*d.value; total += sub; items.push({label:d.label, value:d.value, count:cnt, subtotal:sub}); }
+  });
+  return { items, total };
+}
 /* जुन्या (मायग्रेशनच्या) काही व्यवहारांना balance_after भरलेलं नसू शकतं — असं आढळल्यास इशारा दाखवतो */
 function incompleteHistoryBanner(rows){
   const missing = (rows||[]).some(r => r.balance_after === null || r.balance_after === undefined);
@@ -3638,13 +3730,15 @@ async function reviewLoanApplication(appId, decision){
   setTimeout(() => render('loanapps'), 1000);
 }
 
+let CDV_REQS = {}; // requestId -> request row (denomination पडताळणीसाठी कॅशे)
 async function renderCashDepositVerify(c){
   c.innerHTML = '<div class="empty">प्रलंबित विनंत्या आणत आहे...</div>';
   try {
     const { data: reqs, error } = await sbClient.from('cash_deposit_requests')
-      .select('id,amount,status,created_at,accounts!account_id(account_no),members!member_id(name,member_no,mobile)')
+      .select('id,amount,status,created_at,denomination,accounts!account_id(account_no),members!member_id(name,member_no,mobile)')
       .eq('status', 'pending').order('created_at', { ascending: false });
     if (error) throw error;
+    CDV_REQS = {}; (reqs||[]).forEach(r => CDV_REQS[r.id] = r);
     const rows = (reqs||[]).map(r => `
       <tr>
         <td>${new Date(r.created_at).toLocaleString('en-IN')}</td>
@@ -3652,17 +3746,23 @@ async function renderCashDepositVerify(c){
         <td>${r.members?.mobile||''}</td>
         <td>${r.accounts?.account_no||''}</td>
         <td style="text-align:right;">${fmtMoney(r.amount)}</td>
+        <td><button class="btn ghost small" onclick="toggleDenomDetail('${r.id}')" id="denom-toggle-btn-${r.id}">नोटा/नाणी तपशील ▾</button></td>
         <td><input type="text" maxlength="6" placeholder="OTP" id="otp-${r.id}" style="width:80px;padding:5px;"></td>
         <td><button class="btn gold small" onclick="verifyCashDeposit('${r.id}')">पडताळा</button></td>
+      </tr>
+      <tr id="denom-row-${r.id}" style="display:none;">
+        <td colspan="8" style="background:#faf8f2;padding:12px;">
+          <div id="denom-content-${r.id}"></div>
+        </td>
       </tr>`).join('');
     c.innerHTML = `
       <div class="panel">
         <h3>कॅश डिपॉझिट पडताळणी</h3>
-        <p style="color:#777;font-size:12.5px;">सभासदाकडून रोख मोजून घेतल्यावर, त्याने सांगितलेला OTP टाकून "पडताळा" दाबा — खात्यात रक्कम आपोआप जमा होईल.</p>
+        <p style="color:#777;font-size:12.5px;">सभासदाने सांगितलेल्या नोटा/नाणी तपशिलाशी काउंटरवरील प्रत्यक्ष रोख मोजून पडताळा (उजवीकडे "प्रत्यक्ष मोजणी" रकाने भरा), मग OTP टाकून "पडताळा" दाबा — खात्यात रक्कम आपोआप जमा होईल.</p>
         <div class="table-scroll">
           <table class="data-table">
-            <thead><tr><th>विनंती वेळ</th><th>सभासद</th><th>मोबाईल</th><th>खाते क्र</th><th>रक्कम</th><th>OTP</th><th></th></tr></thead>
-            <tbody>${rows || '<tr><td colspan="7" class="empty">कोणतीही प्रलंबित विनंती नाही.</td></tr>'}</tbody>
+            <thead><tr><th>विनंती वेळ</th><th>सभासद</th><th>मोबाईल</th><th>खाते क्र</th><th>रक्कम</th><th>नोटा/नाणी</th><th>OTP</th><th></th></tr></thead>
+            <tbody>${rows || '<tr><td colspan="8" class="empty">कोणतीही प्रलंबित विनंती नाही.</td></tr>'}</tbody>
           </table>
         </div>
         <div id="cdv-status" style="margin-top:10px;"></div>
@@ -3671,11 +3771,64 @@ async function renderCashDepositVerify(c){
   } catch(e){ c.innerHTML = errBanner('त्रुटी: ' + e.message); }
 }
 
+function toggleDenomDetail(id){
+  const row = document.getElementById('denom-row-' + id);
+  const btn = document.getElementById('denom-toggle-btn-' + id);
+  if (!row) return;
+  const opening = (row.style.display === 'none');
+  row.style.display = opening ? '' : 'none';
+  if (btn) btn.textContent = opening ? 'नोटा/नाणी तपशील ▴' : 'नोटा/नाणी तपशील ▾';
+  if (opening && !row.dataset.built){
+    const r = CDV_REQS[id];
+    const memberTable = renderDenomTable('mem-'+id, r.denomination || []);
+    const staffPrefix = 'stf-' + id;
+    window['onDenomTotalChange_' + staffPrefix] = (staffTotal) => checkDenomMatch(id, staffTotal);
+    document.getElementById('denom-content-' + id).innerHTML = `
+      <div style="display:flex;gap:18px;flex-wrap:wrap;">
+        <div style="flex:1;min-width:260px;">
+          <div style="font-weight:700;font-size:13px;margin-bottom:4px;">सभासदाने सांगितलेले (डिपॉझिट विनंतीनुसार)</div>
+          ${r.denomination && r.denomination.length ? memberTable : '<div class="empty" style="padding:8px 0;">नोटा/नाणी तपशील उपलब्ध नाही (जुनी विनंती — अ‍ॅपच्या आधीच्या आवृत्तीत नोंदवलेली).</div>'}
+        </div>
+        <div style="flex:1;min-width:260px;">
+          <div style="font-weight:700;font-size:13px;margin-bottom:4px;">काउंटरवर प्रत्यक्ष मोजणी (स्टाफ भरतो)</div>
+          ${renderDenomTable(staffPrefix)}
+        </div>
+      </div>
+      <div id="denom-match-${id}" style="margin-top:10px;"></div>
+    `;
+    row.dataset.built = '1';
+  }
+}
+
+function checkDenomMatch(id, staffTotal){
+  const r = CDV_REQS[id];
+  const matchEl = document.getElementById('denom-match-' + id);
+  if (!matchEl) return;
+  const declared = Number(r.amount || 0);
+  if (staffTotal === 0){ matchEl.innerHTML = ''; return; }
+  if (staffTotal === declared){
+    matchEl.innerHTML = `<div class="banner ok">✓ जुळते — दोन्ही बाजूंची एकूण रक्कम ${fmtMoney(declared)} (${amountToMarathiWords(declared)}) सारखीच आहे.</div>`;
+  } else {
+    matchEl.innerHTML = `<div class="banner warn">⚠ जुळत नाही — सभासदाने सांगितलेली रक्कम ${fmtMoney(declared)}, प्रत्यक्ष मोजणी ${fmtMoney(staffTotal)}. फरक: ${fmtMoney(Math.abs(declared-staffTotal))}. कृपया पुन्हा मोजा किंवा सभासदाशी पडताळणी करा.</div>`;
+  }
+}
+
 async function verifyCashDeposit(requestId){
   const otpInput = document.getElementById('otp-' + requestId);
   const statusEl = document.getElementById('cdv-status');
   const otp = otpInput.value.trim();
   if (!otp || otp.length !== 6){ statusEl.innerHTML = '<div class="banner warn">बरोबर ६-अंकी OTP टाका.</div>'; return; }
+  // जर स्टाफने प्रत्यक्ष मोजणी भरली असेल आणि ती जुळत नसेल, तर पुढे जाण्याआधी खात्री विचारतो
+  const staffPrefix = 'stf-' + requestId;
+  const staffTotalEl = document.getElementById(staffPrefix + '-grand');
+  if (staffTotalEl){
+    const staffTotal = collectDenomBreakdown(staffPrefix).total;
+    const r = CDV_REQS[requestId];
+    if (staffTotal > 0 && r && staffTotal !== Number(r.amount||0)){
+      const proceed = confirm(`⚠ प्रत्यक्ष मोजणी (${fmtMoney(staffTotal)}) आणि सभासदाने सांगितलेली रक्कम (${fmtMoney(r.amount)}) जुळत नाही. तरीही पुढे जायचं का?`);
+      if (!proceed) return;
+    }
+  }
   const { data, error } = await sbClient.rpc('verify_cash_deposit', { p_request_id: requestId, p_otp: otp });
   if (error){ statusEl.innerHTML = errBanner('त्रुटी: ' + error.message); return; }
   if (!data.success){ statusEl.innerHTML = `<div class="banner warn">${data.error}</div>`; return; }
