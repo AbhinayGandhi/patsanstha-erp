@@ -164,6 +164,7 @@ function updateDenomTotal(idPrefix){
   if (grandEl) grandEl.textContent = fmtMoney(total);
   const wordsEl = document.getElementById(`${idPrefix}-words`);
   if (wordsEl) wordsEl.textContent = 'एकूण (अक्षरी): ' + amountToMarathiWords(total);
+  if (typeof window['onDenomTotalChange_'+idPrefix] === 'function') window['onDenomTotalChange_'+idPrefix](total);
   return total;
 }
 function collectDenomBreakdown(idPrefix){
@@ -469,7 +470,7 @@ async function loadMemberAndShowDashboard(){
   const { data: { session } } = await sb.auth.getSession();
   if (!session){ renderLogin(); return; }
   const { data: member, error } = await sb.from('members')
-    .select('id,member_no,name,mobile').eq('auth_user_id', session.user.id).maybeSingle();
+    .select('id,member_no,name,mobile,branch_id,branches(name)').eq('auth_user_id', session.user.id).maybeSingle();
   if (error || !member){ renderLogin('खातं सापडलं नाही — पुन्हा नोंदणी करा किंवा शाखेशी संपर्क साधा.'); return; }
   CURRENT_MEMBER = member;
   logoutBtn.classList.remove('hidden');
@@ -895,46 +896,114 @@ async function renderLoanApplication(){
 
 async function renderCashDepositRequest(){
   c.innerHTML = '<div class="empty">लोड होत आहे...</div>';
-  const { data: accounts } = await sb.from('accounts')
-    .select('id,account_no,product_type,status').eq('member_id', CURRENT_MEMBER.id).eq('status','active').in('product_type',['savings','pigmy']);
+  const [{ data: accounts }, { data: branches }] = await Promise.all([
+    sb.from('accounts').select('id,account_no,product_type,status').eq('member_id', CURRENT_MEMBER.id).eq('status','active').in('product_type',['savings','pigmy']),
+    sb.from('branches').select('id,name').order('name')
+  ]);
   const opts = (accounts||[]).map(a => `<option value="${a.id}">${a.account_no} (${a.product_type})</option>`).join('');
+  const myBranchId = CURRENT_MEMBER.branch_id || '';
+  const branchOpts = (branches||[]).map(b => `<option value="${b.id}" ${b.id===myBranchId?'selected':''}>${b.name}</option>`).join('');
   c.innerHTML = `
     <div class="card">
       <h2 style="text-align:center;margin-top:0;">💵 कॅश डिपॉझिट</h2>
-      <p style="font-size:12.5px;color:#777;text-align:center;">खातं निवडा, तुमच्याकडील नोटा/नाणी मोजून त्यांची संख्या खाली भरा — एकूण रक्कम आपोआप मोजली जाईल. नंतर मिळणारा OTP कॅश-काउंटरवर सांगून पैसे जमा करा.</p>
+      <p style="font-size:12.5px;color:#777;text-align:center;">खातं व माहिती भरा, तुमच्याकडील नोटा/नाणी मोजून त्यांची संख्या खाली भरा — एकूण रक्कम आपोआप मोजली जाईल. नंतर मिळणारा OTP कॅश-काउंटरवर सांगून पैसे जमा करा.</p>
       ${!accounts || !accounts.length ? '<div class="empty">डिपॉझिटसाठी योग्य (बचत/पिग्मी) सक्रिय खातं सापडलं नाही.</div>' : `
         <div class="field"><label>कोणत्या खात्यात</label><select id="cd-account">${opts}</select></div>
+        <div class="field"><label>जमा करायची शाखा</label><select id="cd-branch">${branchOpts || '<option value="">-- शाखा नाही --</option>'}</select></div>
+        <div class="field"><label>जमा हेतू</label>
+          <select id="cd-purpose" onchange="document.getElementById('cd-purpose-other-wrap').style.display=(this.value==='इतर')?'':'none';">
+            <option value="बचत जमा">बचत जमा</option>
+            <option value="पिग्मी हप्ता">पिग्मी हप्ता</option>
+            <option value="कर्ज हप्ता">कर्ज हप्ता</option>
+            <option value="इतर">इतर</option>
+          </select>
+        </div>
+        <div class="field" id="cd-purpose-other-wrap" style="display:none;"><label>हेतू तपशील</label><input id="cd-purpose-other" type="text" placeholder="उदा. देणगी"></div>
+        <div class="field"><label>अपेक्षित रक्कम (₹)</label><input id="cd-expected-amount" type="number" placeholder="जमा करायची एकूण रक्कम टाका" oninput="checkCdAmountMatch()"></div>
         <div class="field"><label>नोटा / नाणी मोजणी</label>${renderDenomTable('cd')}</div>
+        <div id="cd-match-msg" style="font-size:12px;margin-top:4px;"></div>
+        <div class="field"><label>टिप्पणी</label><textarea id="cd-remarks" rows="2" placeholder="काही नोंद असल्यास लिहा"></textarea></div>
         <button class="btn gold" id="cd-request-btn" style="margin-top:12px;">OTP मिळवा</button>
       `}
       <div class="err" id="cd-err"></div>
       <div id="cd-otp-box"></div>
     </div>
   `;
+  window.onDenomTotalChange_cd = checkCdAmountMatch;
   const btn = document.getElementById('cd-request-btn');
   if (btn) btn.addEventListener('click', async () => {
     const errEl = document.getElementById('cd-err');
     errEl.textContent = '';
     const accountId = document.getElementById('cd-account').value;
+    const branchId = document.getElementById('cd-branch').value || null;
+    const purposeSel = document.getElementById('cd-purpose').value;
+    const purposeOther = document.getElementById('cd-purpose-other').value.trim();
+    const purpose = purposeSel === 'इतर' ? (purposeOther || 'इतर') : purposeSel;
+    const remarks = document.getElementById('cd-remarks').value.trim();
+    const expected = Number(document.getElementById('cd-expected-amount').value || 0);
     const { items, total } = collectDenomBreakdown('cd');
     if (!total || total <= 0){ errEl.textContent = 'किमान एका दर्शनी किमतीच्या नोटा/नाण्यांची संख्या भरा.'; return; }
+    if (!expected || expected <= 0){ errEl.textContent = 'अपेक्षित रक्कम टाका.'; return; }
+    if (expected !== total){ errEl.textContent = `अपेक्षित रक्कम (${fmtMoney(expected)}) आणि नोटा/नाणी मोजणीची एकूण रक्कम (${fmtMoney(total)}) जुळत नाही — कृपया पुन्हा तपासा.`; return; }
+    if (purposeSel === 'इतर' && !purposeOther){ errEl.textContent = 'हेतू तपशील टाका.'; return; }
     btn.disabled = true; btn.textContent = 'तयार करत आहे...';
     const otp = String(Math.floor(100000 + Math.random()*900000));
     const { data, error } = await sb.from('cash_deposit_requests')
-      .insert({ account_id: accountId, member_id: CURRENT_MEMBER.id, amount: total, otp, denomination: items })
-      .select('id').single();
+      .insert({ account_id: accountId, member_id: CURRENT_MEMBER.id, amount: total, otp, denomination: items, purpose, branch_id: branchId, remarks: remarks || null })
+      .select('id, transaction_id').single();
     btn.disabled = false; btn.textContent = 'OTP मिळवा';
     if (error){ errEl.textContent = 'त्रुटी: ' + error.message; return; }
     document.getElementById('cd-otp-box').innerHTML = `
       <div style="background:var(--cream);border-radius:8px;padding:18px;text-align:center;margin-top:14px;">
+        ${data.transaction_id ? `<div style="font-size:12px;color:#777;">Transaction ID</div><div style="font-size:16px;font-weight:700;color:var(--navy);margin-bottom:8px;">${data.transaction_id}</div>` : ''}
         <div style="font-size:12px;color:#777;">हा OTP कॅश-काउंटरवर सांगा</div>
         <div style="font-size:32px;font-weight:700;color:var(--navy);letter-spacing:4px;">${otp}</div>
         <div style="font-size:12px;color:#777;margin-top:6px;">एकूण रक्कम (अंकी): ${fmtMoney(total)}</div>
         <div style="font-size:12px;color:#777;">एकूण रक्कम (अक्षरी): ${amountToMarathiWords(total)}</div>
+        <div id="cd-qr-box" style="margin:14px auto 6px;display:inline-block;padding:10px;background:#fff;border-radius:8px;"></div>
+        <div style="font-size:11px;color:#999;">हा QR काउंटरवर स्कॅनरसमोर धरा — विनंती लगेच शोधली जाईल (OTP वेगळं सांगावंच लागेल)</div>
+        <div style="margin-top:8px;">
+          <button class="btn ghost small" id="cd-qr-download" type="button">QR डाउनलोड</button>
+          <button class="btn ghost small" id="cd-qr-print" type="button">QR प्रिंट</button>
+        </div>
       </div>
       <p style="font-size:11px;color:#999;margin-top:10px;text-align:center;">काउंटरवर पैसे मोजून, तुम्ही भरलेली नोटा/नाणी संख्या पडताळून, OTP सांगितल्यावरच खात्यात जमा होईल.</p>
     `;
+    if (window.QRCode){
+      const qrPayload = JSON.stringify({ id: data.id, txn: data.transaction_id || '', amount: total, member: CURRENT_MEMBER.member_no });
+      new QRCode(document.getElementById('cd-qr-box'), { text: qrPayload, width:160, height:160, colorDark:'#1B2A4A', colorLight:'#ffffff' });
+      const getQrImgUrl = () => {
+        const box = document.getElementById('cd-qr-box');
+        const canvasEl = box.querySelector('canvas');
+        const imgEl = box.querySelector('img');
+        return canvasEl ? canvasEl.toDataURL('image/png') : (imgEl ? imgEl.src : null);
+      };
+      const dlBtn = document.getElementById('cd-qr-download');
+      if (dlBtn) dlBtn.addEventListener('click', () => {
+        const url = getQrImgUrl(); if (!url) return;
+        const a = document.createElement('a'); a.href = url; a.download = (data.transaction_id || 'cash-deposit-qr') + '.png'; a.click();
+      });
+      const prBtn = document.getElementById('cd-qr-print');
+      if (prBtn) prBtn.addEventListener('click', () => {
+        const url = getQrImgUrl(); if (!url) return;
+        const w = window.open('', '_blank');
+        w.document.write(`<html><body style="text-align:center;padding:40px;font-family:sans-serif;"><img src="${url}"><p>${data.transaction_id||''} — ${fmtMoney(total)}</p></body></html>`);
+        w.document.close(); w.focus(); w.print();
+      });
+    }
   });
+}
+function checkCdAmountMatch(){
+  const msgEl = document.getElementById('cd-match-msg');
+  if (!msgEl) return;
+  const expected = Number(document.getElementById('cd-expected-amount').value || 0);
+  const total = collectDenomBreakdown('cd').total;
+  if (!expected || !total){ msgEl.textContent = ''; return; }
+  if (expected === total){
+    msgEl.innerHTML = `<span style="color:#2a7a2a;">✓ अपेक्षित रक्कम आणि नोटा/नाणी मोजणी जुळते.</span>`;
+  } else {
+    msgEl.innerHTML = `<span style="color:#b33;">⚠ जुळत नाही — फरक: ${fmtMoney(Math.abs(expected-total))}</span>`;
+  }
 }
 
 async function renderMyQR(){
