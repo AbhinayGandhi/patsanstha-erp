@@ -553,6 +553,15 @@ async function renderDashboard(){
       .in('account_id', accIds).order('txn_date',{ascending:false}).limit(10);
     txns = data || [];
   }
+  const since24h = new Date(Date.now() - 24*60*60*1000).toISOString();
+  const { data: recentDeposits } = await sb.from('cash_deposit_requests')
+    .select('id,transaction_id,amount,created_at,accounts!account_id(account_no)')
+    .eq('member_id', CURRENT_MEMBER.id).eq('status','verified').gte('created_at', since24h)
+    .order('created_at', { ascending:false });
+  const depositBanner = (recentDeposits||[]).map(r => `
+    <div style="background:#eaf7ea;border:1px solid #b7e0b7;border-radius:8px;padding:12px 14px;margin-bottom:10px;font-size:13px;">
+      ✅ तुमचे <b>${fmtMoney(r.amount)}</b> कॅश डिपॉझिट (${r.accounts?.account_no||''}) <b>${new Date(r.created_at).toLocaleString('en-IN')}</b> ला यशस्वीरित्या जमा झाले — Txn ID: ${r.transaction_id||'-'}
+    </div>`).join('');
   const accRows = activeAcc.map(a => `
     <div class="acc-row">
       <div><div class="no">${a.account_no}</div><div class="type">${a.product_type}</div></div>
@@ -567,6 +576,7 @@ async function renderDashboard(){
       <div class="${t.cd_flag==='C'?'c':'d'}">${t.cd_flag==='C'?'+':'-'} ${fmtMoney(t.amount)}</div>
     </div>`).join('');
   c.innerHTML = `
+    ${depositBanner}
     <div class="card" style="text-align:center;">
       <div style="font-size:15px;font-weight:600;">${CURRENT_MEMBER.name}</div>
       <div style="font-size:12px;color:#8a8676;margin-bottom:8px;">सभासद क्र: ${CURRENT_MEMBER.member_no}</div>
@@ -894,6 +904,97 @@ async function renderLoanApplication(){
   });
 }
 
+let CD_HISTORY_ROWS = [];
+async function loadCdHistory(){
+  const box = document.getElementById('cd-history-box');
+  if (!box) return;
+  box.innerHTML = '<div class="empty">लोड होत आहे...</div>';
+  const { data, error } = await sb.from('cash_deposit_requests')
+    .select('id,transaction_id,amount,status,purpose,created_at,denomination,accounts!account_id(account_no),branches!branch_id(name)')
+    .eq('member_id', CURRENT_MEMBER.id)
+    .order('created_at', { ascending: false })
+    .limit(20);
+  if (error){ box.innerHTML = `<div class="err">इतिहास मिळाला नाही: ${error.message}</div>`; return; }
+  CD_HISTORY_ROWS = data || [];
+  const statusLabel = (s) => ({ pending:'⏳ प्रलंबित', verified:'✅ जमा झाले', expired:'⌛ कालबाह्य', locked:'🔒 लॉक', cancelled:'🚫 रद्द केली' }[s] || s);
+  box.innerHTML = `
+    <table class="data-table" style="width:100%;font-size:12px;margin-top:4px;">
+      <thead><tr><th>दिनांक</th><th>Txn ID</th><th>खातं</th><th>रक्कम</th><th>स्थिती</th><th></th></tr></thead>
+      <tbody>${CD_HISTORY_ROWS.map(r => `<tr>
+        <td>${new Date(r.created_at).toLocaleDateString('en-IN')}</td>
+        <td>${r.transaction_id||'-'}</td>
+        <td>${r.accounts?.account_no||''}</td>
+        <td style="text-align:right;">${fmtMoney(r.amount)}</td>
+        <td>${statusLabel(r.status)}</td>
+        <td>${r.status==='verified' ? `<button class="btn ghost small" onclick="printMemberReceipt('${r.id}')">पावती</button>` : ''}${r.status==='pending' ? `<button class="btn ghost small" onclick="cancelCdRequest('${r.id}')">रद्द करा</button>` : ''}</td>
+      </tr>`).join('') || '<tr><td colspan="6" class="empty">कुठलीही विनंती सापडली नाही.</td></tr>'}</tbody>
+    </table>
+  `;
+  box.dataset.loaded = '1';
+}
+async function toggleCdHistory(){
+  const box = document.getElementById('cd-history-box');
+  if (!box) return;
+  if (box.dataset.open === '1'){ box.style.display = 'none'; box.dataset.open = '0'; return; }
+  box.style.display = '';
+  box.dataset.open = '1';
+  await loadCdHistory();
+}
+async function cancelCdRequest(id){
+  if (!confirm('ही विनंती रद्द करायची आहे का? रद्द केल्यावर हा OTP वापरता येणार नाही.')) return;
+  const { error } = await sb.from('cash_deposit_requests')
+    .update({ status: 'cancelled' })
+    .eq('id', id).eq('member_id', CURRENT_MEMBER.id).eq('status', 'pending');
+  if (error){ alert('रद्द करता आलं नाही: ' + error.message); return; }
+  sb.from('cash_deposit_audit_log').insert({
+    request_id: id, action: 'cancelled', actor_type: 'member',
+    actor_id: CURRENT_MEMBER.id, actor_name: CURRENT_MEMBER.name, details: {}
+  }).then(()=>{});
+  const otpBox = document.getElementById('cd-otp-box');
+  if (otpBox) otpBox.innerHTML = '<div class="empty">ही विनंती रद्द केली गेली आहे. नवीन विनंतीसाठी वरील फॉर्म पुन्हा भरा.</div>';
+  const historyBox = document.getElementById('cd-history-box');
+  if (historyBox && historyBox.dataset.open === '1') loadCdHistory();
+}
+function printMemberReceipt(id){
+  const r = CD_HISTORY_ROWS.find(x => x.id === id);
+  if (!r){ alert('तपशील सापडला नाही — यादी पुन्हा उघडून बघा.'); return; }
+  const denomRows = (r.denomination||[]).map(d => `<tr><td>${d.label}</td><td style="text-align:right;">${d.count}</td><td style="text-align:right;">${fmtMoney(d.subtotal)}</td></tr>`).join('');
+  const qrPayload = JSON.stringify({ txn: r.transaction_id, amount: r.amount, member: CURRENT_MEMBER.member_no, verified: true });
+  const w = window.open('', '_blank', 'width=420,height=700');
+  if (!w){ alert('पॉप-अप ब्लॉक झाला — कृपया या साईटसाठी पॉप-अप परवानगी द्या.'); return; }
+  w.document.write(`
+    <html><head><title>पावती - ${r.transaction_id||''}</title><meta charset="utf-8">
+    <style>
+      body{font-family:'Noto Sans Devanagari', Arial, sans-serif; padding:20px; color:#1B2A4A;}
+      h2{text-align:center;margin:0 0 2px;}
+      .sub{text-align:center;color:#777;font-size:12px;margin-bottom:14px;}
+      table{width:100%;border-collapse:collapse;font-size:13px;margin:10px 0;}
+      td,th{border:1px solid #ddd;padding:5px 8px;}
+      .row{display:flex;justify-content:space-between;font-size:13px;margin:3px 0;}
+      #qr{text-align:center;margin-top:10px;}
+    </style>
+    </head><body>
+      <h2>पतसंस्था ERP</h2>
+      <div class="sub">Patsanstha Management — कॅश डिपॉझिट पावती (सभासद प्रत)</div>
+      <div class="row"><span>Receipt / Txn ID</span><b>${r.transaction_id||'-'}</b></div>
+      <div class="row"><span>दिनांक/वेळ</span><b>${new Date(r.created_at).toLocaleString('en-IN')}</b></div>
+      <div class="row"><span>सभासद</span><b>${CURRENT_MEMBER.name} (${CURRENT_MEMBER.member_no})</b></div>
+      <div class="row"><span>खाते क्र</span><b>${r.accounts?.account_no||''}</b></div>
+      <div class="row"><span>शाखा</span><b>${r.branches?.name||'-'}</b></div>
+      <div class="row"><span>हेतू</span><b>${r.purpose||'-'}</b></div>
+      <table><thead><tr><th>दर्शनी किंमत</th><th>नग</th><th>रक्कम</th></tr></thead><tbody>${denomRows || '<tr><td colspan="3">तपशील नाही</td></tr>'}</tbody></table>
+      <div class="row"><span><b>एकूण रक्कम (अंकी)</b></span><b>${fmtMoney(r.amount)}</b></div>
+      <div style="font-size:12px;margin:4px 0;"><b>एकूण (अक्षरी):</b> ${amountToMarathiWords(r.amount)}</div>
+      <div id="qr"></div>
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"><\/script>
+      <script>
+        new QRCode(document.getElementById('qr'), { text: ${JSON.stringify(qrPayload)}, width:120, height:120 });
+        window.onload = () => setTimeout(() => window.print(), 300);
+      <\/script>
+    </body></html>
+  `);
+  w.document.close();
+}
 async function renderCashDepositRequest(){
   c.innerHTML = '<div class="empty">लोड होत आहे...</div>';
   const [{ data: accounts }, { data: branches }] = await Promise.all([
@@ -907,6 +1008,10 @@ async function renderCashDepositRequest(){
     <div class="card">
       <h2 style="text-align:center;margin-top:0;">💵 कॅश डिपॉझिट</h2>
       <p style="font-size:12.5px;color:#777;text-align:center;">खातं व माहिती भरा, तुमच्याकडील नोटा/नाणी मोजून त्यांची संख्या खाली भरा — एकूण रक्कम आपोआप मोजली जाईल. नंतर मिळणारा OTP कॅश-काउंटरवर सांगून पैसे जमा करा.</p>
+      <div style="text-align:center;margin-bottom:10px;">
+        <button class="btn ghost small" onclick="toggleCdHistory()" type="button">🕘 मागील विनंत्या पहा</button>
+      </div>
+      <div id="cd-history-box" style="display:none;margin-bottom:14px;"></div>
       ${!accounts || !accounts.length ? '<div class="empty">डिपॉझिटसाठी योग्य (बचत/पिग्मी) सक्रिय खातं सापडलं नाही.</div>' : `
         <div class="field"><label>कोणत्या खात्यात</label><select id="cd-account">${opts}</select></div>
         <div class="field"><label>जमा करायची शाखा</label><select id="cd-branch">${branchOpts || '<option value="">-- शाखा नाही --</option>'}</select></div>
@@ -953,6 +1058,11 @@ async function renderCashDepositRequest(){
       .select('id, transaction_id').single();
     btn.disabled = false; btn.textContent = 'OTP मिळवा';
     if (error){ errEl.textContent = 'त्रुटी: ' + error.message; return; }
+    sb.from('cash_deposit_audit_log').insert({
+      request_id: data.id, action: 'request_created', actor_type: 'member',
+      actor_id: CURRENT_MEMBER.id, actor_name: CURRENT_MEMBER.name,
+      details: { amount: total, transaction_id: data.transaction_id, purpose }
+    }).then(()=>{});
     document.getElementById('cd-otp-box').innerHTML = `
       <div style="background:var(--cream);border-radius:8px;padding:18px;text-align:center;margin-top:14px;">
         ${data.transaction_id ? `<div style="font-size:12px;color:#777;">Transaction ID</div><div style="font-size:16px;font-weight:700;color:var(--navy);margin-bottom:8px;">${data.transaction_id}</div>` : ''}
@@ -965,6 +1075,9 @@ async function renderCashDepositRequest(){
         <div style="margin-top:8px;">
           <button class="btn ghost small" id="cd-qr-download" type="button">QR डाउनलोड</button>
           <button class="btn ghost small" id="cd-qr-print" type="button">QR प्रिंट</button>
+        </div>
+        <div style="margin-top:8px;">
+          <button class="btn ghost small" id="cd-cancel-now-btn" type="button" style="color:#b33;">ही विनंती रद्द करा</button>
         </div>
       </div>
       <p style="font-size:11px;color:#999;margin-top:10px;text-align:center;">काउंटरवर पैसे मोजून, तुम्ही भरलेली नोटा/नाणी संख्या पडताळून, OTP सांगितल्यावरच खात्यात जमा होईल.</p>
@@ -991,6 +1104,8 @@ async function renderCashDepositRequest(){
         w.document.close(); w.focus(); w.print();
       });
     }
+    const cancelNowBtn = document.getElementById('cd-cancel-now-btn');
+    if (cancelNowBtn) cancelNowBtn.addEventListener('click', () => cancelCdRequest(data.id));
   });
 }
 function checkCdAmountMatch(){
