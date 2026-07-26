@@ -215,6 +215,8 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
       <a data-view="cleanup"><span class="ic">🧹</span> साफसफाई</a>
       <a data-view="dataquality"><span class="ic">🩺</span> डेटा गुणवत्ता</a>
       <a data-view="cashdeposit"><span class="ic">💵</span> कॅश डिपॉझिट पडताळणी</a>
+      <a data-view="cashdepositreport"><span class="ic">📊</span> कॅश डिपॉझिट रिपोर्ट</a>
+      <a data-view="auditlog" id="nav-auditlog" style="display:none;"><span class="ic">📜</span> ऑडिट लॉग</a>
       <a data-view="loanapps"><span class="ic">📝</span> कर्ज अर्ज</a>
       <a data-view="grievances"><span class="ic">💬</span> तक्रारी</a>
       <a data-view="standing"><span class="ic">🔁</span> स्थायी सूचना</a>
@@ -504,6 +506,7 @@ async function loadRefData(){
    ========================================================= */
 async function render(view, param){
   const c = document.getElementById('content');
+  if (typeof stopCcQrScanner === 'function') stopCcQrScanner();
   c.innerHTML = '<div class="empty">लोड होत आहे...</div>';
   if (view === 'dashboard') return renderDashboard(c);
   if (view === 'members') return renderMembers(c);
@@ -517,6 +520,8 @@ async function render(view, param){
   if (view === 'cleanup') return renderCleanup(c);
   if (view === 'dataquality') return renderDataQuality(c);
   if (view === 'cashdeposit') return renderCashDepositVerify(c);
+  if (view === 'cashdepositreport') return renderCashDepositReport(c);
+  if (view === 'auditlog') return renderAuditLog(c);
   if (view === 'loanapps') return renderLoanApplications(c);
   if (view === 'grievances') return renderGrievancesAdmin(c);
   if (view === 'standing') return renderStandingInstructionsAdmin(c);
@@ -562,17 +567,9 @@ async function renderGlobalSearch(c, query){
 /* बॅलन्स बेरीज: Supabase/PostgREST डिफॉल्ट रो-लिमिट (साधारण 1000) मुळे मोठ्या डेटासेटवर
    एका क्वेरीत खरी बेरीज मिळत नाही — म्हणून 1000-1000 च्या पानांत सगळा डेटा वाचून बेरीज करतो */
 async function fetchAllActiveBalanceSum(){
-  let total = 0, from = 0; const chunk = 1000;
-  while (true){
-    const { data, error } = await sbClient.from('accounts')
-      .select('current_balance').eq('status','active').range(from, from + chunk - 1);
-    if (error) throw error;
-    if (!data || !data.length) break;
-    total += data.reduce((s,a)=>s+Number(a.current_balance||0),0);
-    if (data.length < chunk) break;
-    from += chunk;
-  }
-  return total;
+  const { data, error } = await sbClient.rpc('get_active_balance_sum');
+  if (error) throw error;
+  return Number(data || 0);
 }
 
 /* सामान्य pagination helper — Reports साठी संपूर्ण टेबल (1000 row limit टाळून) वाचायला */
@@ -594,7 +591,7 @@ async function fetchAllRows(table, selectStr, applyFilters){
 /* ---------- Dashboard: फक्त हलक्या (लाइट) क्वेरीज ---------- */
 async function renderDashboard(c){
   if (usingMock()){
-    c.innerHTML = dashboardHtml(2, 2, 265000, 0, MOCK.accounts) + connWarningBanner();
+    c.innerHTML = dashboardHtml(2, 2, 265000, 0, 0, 0) + connWarningBanner();
     return;
   }
   try {
@@ -604,15 +601,18 @@ async function renderDashboard(c){
     ]);
     const {count:loanCount} = await sbClient.from('accounts').select('id',{count:'exact',head:true}).eq('product_type','loan');
     const totalBal = await fetchAllActiveBalanceSum();
-    const { data: recent } = await sbClient.from('accounts')
-      .select('account_no,current_balance,open_date,product_type,members!member_id(name)')
-      .order('created_at',{ascending:false}).order('id',{ascending:false}).limit(8);
-    c.innerHTML = dashboardHtml(memberCount||0, accountCount||0, totalBal, loanCount||0, recent||[]);
+    const todayStart = new Date(); todayStart.setHours(0,0,0,0);
+    const [{count:pendingCdCount}, {data:todayCdRows}] = await Promise.all([
+      sbClient.from('cash_deposit_requests').select('id',{count:'exact',head:true}).eq('status','pending'),
+      sbClient.from('cash_deposit_requests').select('amount').eq('status','verified').gte('created_at', todayStart.toISOString())
+    ]);
+    const todayCdTotal = (todayCdRows||[]).reduce((s,r)=>s+Number(r.amount||0),0);
+    c.innerHTML = dashboardHtml(memberCount||0, accountCount||0, totalBal, loanCount||0, pendingCdCount||0, todayCdTotal);
   } catch(e){
     c.innerHTML = errBanner('डॅशबोर्ड डेटा आणताना त्रुटी: ' + e.message);
   }
 }
-function dashboardHtml(memberCount, accountCount, totalBal, loanCount, recentAccounts){
+function dashboardHtml(memberCount, accountCount, totalBal, loanCount, pendingCdCount, todayCdTotal){
   return `
     <div class="stat-row">
       <div class="stat"><div class="num">${memberCount}</div><div class="lbl">एकूण सभासद</div></div>
@@ -620,18 +620,9 @@ function dashboardHtml(memberCount, accountCount, totalBal, loanCount, recentAcc
       <div class="stat"><div class="num">${fmtMoney(totalBal)}</div><div class="lbl">एकूण शिल्लक (सक्रिय)</div></div>
       <div class="stat"><div class="num">${loanCount}</div><div class="lbl">कर्ज खाती</div></div>
     </div>
-    <div class="panel">
-      <div class="panel-head"><h3>अलीकडील खाती</h3></div>
-      <table>
-        <thead><tr><th>खाते क्र</th><th>सभासद</th><th>प्रकार</th><th>शिल्लक</th><th>दिनांक</th></tr></thead>
-        <tbody>
-          ${recentAccounts.length ? recentAccounts.map(a=>`
-            <tr><td>${a.account_no}</td><td>${(a.members&&a.members.name)||''}</td>
-            <td>${PRODUCT_TAG[a.product_type]||a.product_type}</td>
-            <td>${fmtMoney(a.current_balance)}</td><td>${a.open_date||''}</td></tr>
-          `).join('') : '<tr><td colspan="5" class="empty">डेटा नाही</td></tr>'}
-        </tbody>
-      </table>
+    <div class="stat-row">
+      <div class="stat" style="cursor:pointer;" onclick="render('cashdeposit')"><div class="num">${pendingCdCount}</div><div class="lbl">⏳ प्रलंबित कॅश डिपॉझिट</div></div>
+      <div class="stat" style="cursor:pointer;" onclick="render('cashdeposit')"><div class="num">${fmtMoney(todayCdTotal)}</div><div class="lbl">💵 आजची कॅश कलेक्शन</div></div>
     </div>
   `;
 }
@@ -3796,30 +3787,125 @@ function handleCcQrResult(raw){
     return;
   }
   if (msgEl) msgEl.innerHTML = `<div class="banner ok">✓ विनंती सापडली — Txn ID: ${CDV_REQS[reqId].transaction_id||'-'}. आता सभासदाने सांगितलेला OTP त्याच ओळीत टाका.</div>`;
+  sbClient.from('cash_deposit_audit_log').insert({
+    request_id: reqId, action: 'qr_scanned', actor_type: 'staff',
+    actor_id: CURRENT_STAFF?.id || null, actor_name: CURRENT_STAFF?.name || null,
+    details: { transaction_id: CDV_REQS[reqId].transaction_id }
+  }).then(()=>{});
   const row = document.getElementById('denom-row-' + reqId);
   if (row && row.style.display === 'none') toggleDenomDetail(reqId);
   const otpInput = document.getElementById('otp-' + reqId);
   if (otpInput){ otpInput.scrollIntoView({behavior:'smooth', block:'center'}); otpInput.focus(); }
 }
+let CDR_ROWS = [];
+async function renderCashDepositReport(c){
+  c.innerHTML = '<div class="empty">लोड होत आहे...</div>';
+  const { data: branches } = await sbClient.from('branches').select('id,name').order('name');
+  const today = new Date();
+  const monthStart = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().slice(0,10);
+  const todayStr = today.toISOString().slice(0,10);
+  const branchOpts = (branches||[]).map(b => `<option value="${b.id}">${b.name}</option>`).join('');
+  c.innerHTML = `
+    <div class="panel">
+      <h3>कॅश डिपॉझिट रिपोर्ट</h3>
+      <p style="color:#777;font-size:12.5px;">तारीख-रेंज (आणि हवं असल्यास शाखा) निवडून पडताळलेल्या (verified) कॅश डिपॉझिटची यादी व एकूण बघा — महिना-अखेर ताळमेळीसाठी उपयोगी.</p>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:end;margin-bottom:12px;">
+        <div><label style="display:block;font-size:11px;color:#666;">पासून</label><input type="date" id="cdr-from" value="${monthStart}" style="padding:7px;border:1px solid #d8d8d8;border-radius:6px;"></div>
+        <div><label style="display:block;font-size:11px;color:#666;">पर्यंत</label><input type="date" id="cdr-to" value="${todayStr}" style="padding:7px;border:1px solid #d8d8d8;border-radius:6px;"></div>
+        <div><label style="display:block;font-size:11px;color:#666;">शाखा</label>
+          <select id="cdr-branch" style="padding:7px;border:1px solid #d8d8d8;border-radius:6px;">
+            <option value="">-- सर्व शाखा --</option>${branchOpts}
+          </select>
+        </div>
+        <button class="btn gold small" onclick="loadCashDepositReport()">शोधा</button>
+        <button class="btn ghost small" onclick="exportCashDepositReportCsv()">⬇ Excel (CSV)</button>
+      </div>
+      <div id="cdr-summary" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;"></div>
+      <div class="table-scroll">
+        <table class="data-table">
+          <thead><tr><th>दिनांक</th><th>Txn ID</th><th>सभासद</th><th>खाते क्र</th><th>शाखा</th><th>रक्कम</th></tr></thead>
+          <tbody id="cdr-tbody"><tr><td colspan="6" class="empty">"शोधा" दाबून रिपोर्ट बघा.</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  `;
+  await loadCashDepositReport();
+}
+async function loadCashDepositReport(){
+  const from = document.getElementById('cdr-from').value;
+  const to = document.getElementById('cdr-to').value;
+  const branchId = document.getElementById('cdr-branch').value;
+  const tbody = document.getElementById('cdr-tbody');
+  const summaryEl = document.getElementById('cdr-summary');
+  tbody.innerHTML = '<tr><td colspan="6" class="empty">लोड होत आहे...</td></tr>';
+  let q = sbClient.from('cash_deposit_requests')
+    .select('id,transaction_id,amount,created_at,branch_id,accounts!account_id(account_no),members!member_id(name,member_no),branches!branch_id(name)')
+    .eq('status', 'verified')
+    .gte('created_at', from + 'T00:00:00')
+    .lte('created_at', to + 'T23:59:59');
+  if (branchId) q = q.eq('branch_id', branchId);
+  const { data, error } = await q.order('created_at', { ascending: false });
+  if (error){ tbody.innerHTML = `<tr><td colspan="6" class="empty">त्रुटी: ${error.message}</td></tr>`; return; }
+  CDR_ROWS = data || [];
+  const totalAmt = CDR_ROWS.reduce((s,r) => s + Number(r.amount||0), 0);
+  summaryEl.innerHTML = `
+    <div style="flex:1;min-width:150px;background:#f3f8f3;border-radius:8px;padding:10px 14px;">
+      <div style="font-size:11px;color:#666;">एकूण रक्कम</div>
+      <div style="font-size:18px;font-weight:700;color:#1B2A4A;">${fmtMoney(totalAmt)}</div>
+    </div>
+    <div style="flex:1;min-width:150px;background:#f3f6fa;border-radius:8px;padding:10px 14px;">
+      <div style="font-size:11px;color:#666;">एकूण व्यवहार</div>
+      <div style="font-size:18px;font-weight:700;color:#1B2A4A;">${CDR_ROWS.length}</div>
+    </div>
+  `;
+  tbody.innerHTML = CDR_ROWS.map(r => `
+    <tr>
+      <td>${new Date(r.created_at).toLocaleString('en-IN')}</td>
+      <td>${r.transaction_id||'-'}</td>
+      <td>${r.members?.name||''} (${r.members?.member_no||''})</td>
+      <td>${r.accounts?.account_no||''}</td>
+      <td>${r.branches?.name||'-'}</td>
+      <td style="text-align:right;">${fmtMoney(r.amount)}</td>
+    </tr>`).join('') || '<tr><td colspan="6" class="empty">या कालावधीत कुठलेही पडताळलेले डिपॉझिट सापडले नाहीत.</td></tr>';
+}
+function exportCashDepositReportCsv(){
+  if (!CDR_ROWS.length){ alert('आधी "शोधा" दाबून रिपोर्ट लोड करा.'); return; }
+  const header = ['दिनांक-वेळ','Transaction ID','सभासद क्रमांक','सभासद नाव','खाते क्र','शाखा','रक्कम'];
+  const csvRows = CDR_ROWS.map(r => [
+    new Date(r.created_at).toLocaleString('en-IN'), r.transaction_id||'', r.members?.member_no||'',
+    (r.members?.name||'').replace(/,/g,' '), r.accounts?.account_no||'', r.branches?.name||'', r.amount
+  ]);
+  const csv = [header, ...csvRows].map(row => row.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `cash-deposit-report-${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
 let CDV_ALL_REQS = []; // सगळ्या प्रलंबित विनंत्या (शोधण्यासाठी कॅशे)
 function cdvRowsHtml(list){
-  return (list||[]).map(r => `
-      <tr>
+  return (list||[]).map(r => {
+    const isLarge = Number(r.amount||0) >= LARGE_CASH_THRESHOLD;
+    return `
+      <tr${isLarge ? ' style="background:#fff8e1;"' : ''}>
         <td>${new Date(r.created_at).toLocaleString('en-IN')}</td>
         <td>${r.transaction_id||'-'}</td>
         <td>${r.members?.name||''} (${r.members?.member_no||''})</td>
         <td>${r.members?.mobile||''}</td>
         <td>${r.accounts?.account_no||''}</td>
-        <td style="text-align:right;">${fmtMoney(r.amount)}</td>
+        <td style="text-align:right;">${fmtMoney(r.amount)} ${isLarge ? '<span title="मोठी रक्कम — विशेष तपासणी आवश्यक" style="color:#b33;font-weight:700;">⚠</span>' : ''}</td>
         <td><button class="btn ghost small" onclick="toggleDenomDetail('${r.id}')" id="denom-toggle-btn-${r.id}">तपशील ▾</button></td>
         <td><input type="text" maxlength="6" placeholder="OTP" id="otp-${r.id}" style="width:80px;padding:5px;"></td>
         <td><button class="btn gold small" onclick="verifyCashDeposit('${r.id}')">पडताळा</button></td>
       </tr>
       <tr id="denom-row-${r.id}" style="display:none;">
         <td colspan="9" style="background:#faf8f2;padding:12px;">
+          ${isLarge ? '<div class="banner warn" style="margin-bottom:10px;">⚠ ही मोठी रोख रक्कम आहे (₹2,00,000 किंवा अधिक) — रोख व्यवहार मर्यादेच्या दृष्टीने विशेष तपासणी करा (PAN/KYC इ.).</div>' : ''}
           <div id="denom-content-${r.id}"></div>
         </td>
-      </tr>`).join('');
+      </tr>`;
+  }).join('');
 }
 function cdvApplySearch(){
   const q = (document.getElementById('cdv-search')?.value || '').trim().toLowerCase();
@@ -3830,26 +3916,131 @@ function cdvApplySearch(){
     (r.transaction_id||'').toLowerCase().includes(q) ||
     (r.members?.member_no||'').toLowerCase().includes(q) ||
     (r.members?.name||'').toLowerCase().includes(q) ||
-    (r.members?.mobile||'').includes(q) ||
-    (r.otp||'') === q
+    (r.members?.mobile||'').includes(q)
   );
   tbody.innerHTML = cdvRowsHtml(filtered) || '<tr><td colspan="9" class="empty">शोधाशी जुळणारी विनंती सापडली नाही.</td></tr>';
 }
+function exportTodayCollectionCsv(){
+  const rows = window.CDV_TODAY_VERIFIED || [];
+  if (!rows.length){ alert('आज अजून कुठलंही डिपॉझिट पडताळलं गेलेलं नाही.'); return; }
+  const header = ['दिनांक-वेळ','Transaction ID','सभासद क्रमांक','सभासद नाव','खाते क्र','रक्कम'];
+  const csvRows = rows.map(r => [
+    new Date(r.created_at).toLocaleString('en-IN'),
+    r.transaction_id||'',
+    r.members?.member_no||'',
+    (r.members?.name||'').replace(/,/g,' '),
+    r.accounts?.account_no||'',
+    r.amount
+  ]);
+  const csv = [header, ...csvRows].map(row => row.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `cash-deposit-collection-${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+async function renderAuditLog(c){
+  if (!CURRENT_STAFF || CURRENT_STAFF.role !== 'admin'){
+    c.innerHTML = errBanner('ही सुविधा फक्त Admin साठी आहे.');
+    return;
+  }
+  c.innerHTML = '<div class="empty">लोड होत आहे...</div>';
+  try {
+    const { data: logs, error } = await sbClient.from('cash_deposit_audit_log')
+      .select('id,action,actor_type,actor_name,details,created_at,cash_deposit_requests!request_id(transaction_id,members!member_id(name,member_no))')
+      .order('created_at', { ascending: false })
+      .limit(200);
+    if (error) throw error;
+    const actionLabel = (a) => ({
+      request_created: '🆕 विनंती तयार', otp_wrong_attempt: '⚠ चुकीचा OTP', locked: '🔒 लॉक झाली',
+      expired: '⌛ कालबाह्य', verified: '✅ पडताळणी यशस्वी', verify_attempt_invalid: '❓ अवैध प्रयत्न',
+      qr_scanned: '📷 QR स्कॅन', receipt_printed: '🖨️ पावती छापली'
+    }[a] || a);
+    const rows = (logs||[]).map(l => `
+      <tr>
+        <td>${new Date(l.created_at).toLocaleString('en-IN')}</td>
+        <td>${actionLabel(l.action)}</td>
+        <td>${l.cash_deposit_requests?.transaction_id || '-'}</td>
+        <td>${l.cash_deposit_requests?.members?.name || '-'}</td>
+        <td>${l.actor_type === 'member' ? '👤 सभासद' : '🧑‍💼 स्टाफ'}: ${l.actor_name||'-'}</td>
+        <td style="font-size:11px;color:#777;max-width:220px;overflow:hidden;text-overflow:ellipsis;">${l.details ? JSON.stringify(l.details) : ''}</td>
+      </tr>`).join('');
+    c.innerHTML = `
+      <div class="panel">
+        <h3>ऑडिट लॉग — कॅश डिपॉझिट (शेवटचे २००)</h3>
+        <p style="color:#777;font-size:12.5px;">फक्त Admin ला दिसणारा — प्रत्येक कॅश डिपॉझिट विनंती/पडताळणी/QR/पावती संबंधित कृतीची नोंद.</p>
+        <div class="table-scroll">
+          <table class="data-table">
+            <thead><tr><th>वेळ</th><th>कृती</th><th>Txn ID</th><th>सभासद</th><th>कोणी केलं</th><th>तपशील</th></tr></thead>
+            <tbody>${rows || '<tr><td colspan="6" class="empty">कुठलीही नोंद नाही.</td></tr>'}</tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  } catch(e){ c.innerHTML = errBanner('त्रुटी: ' + e.message); }
+}
+const LARGE_CASH_THRESHOLD = 200000; // यापेक्षा जास्त रकमेला इशारा दाखवायचा (शाखेनुसार बदलता येईल)
 async function renderCashDepositVerify(c){
   c.innerHTML = '<div class="empty">प्रलंबित विनंत्या आणत आहे...</div>';
   try {
+    // ५ मिनिटांपेक्षा जुन्या pending विनंत्या आपोआप 'expired' करा
+    const cutoff = new Date(Date.now() - 5*60*1000).toISOString();
+    const { data: staleRows } = await sbClient.from('cash_deposit_requests')
+      .select('id, transaction_id').eq('status','pending').lt('created_at', cutoff);
+    if (staleRows && staleRows.length){
+      await sbClient.from('cash_deposit_requests').update({ status:'expired' }).in('id', staleRows.map(r=>r.id));
+      await sbClient.from('cash_deposit_audit_log').insert(
+        staleRows.map(r => ({ request_id:r.id, action:'expired', actor_type:'staff', actor_id:null, actor_name:'system (auto-sweep)', details:{ transaction_id:r.transaction_id } }))
+      );
+    }
+
     const { data: reqs, error } = await sbClient.from('cash_deposit_requests')
-      .select('id,amount,status,created_at,denomination,transaction_id,purpose,remarks,otp,accounts!account_id(account_no),members!member_id(name,member_no,mobile),branches!branch_id(name)')
+      .select('id,amount,status,created_at,denomination,transaction_id,purpose,remarks,accounts!account_id(account_no),members!member_id(name,member_no,mobile),branches!branch_id(name)')
       .eq('status', 'pending').order('created_at', { ascending: false });
     if (error) throw error;
     CDV_REQS = {}; (reqs||[]).forEach(r => CDV_REQS[r.id] = r);
     CDV_ALL_REQS = reqs || [];
+
+    const todayStart = new Date(); todayStart.setHours(0,0,0,0);
+    const { data: todayRows } = await sbClient.from('cash_deposit_requests')
+      .select('id,amount,status,verified_by,transaction_id,created_at,accounts!account_id(account_no),members!member_id(name,member_no)')
+      .gte('created_at', todayStart.toISOString());
+    const tRows = todayRows || [];
+    const verifiedToday = tRows.filter(r => r.status === 'verified');
+    const myVerifiedToday = verifiedToday.filter(r => CURRENT_STAFF && r.verified_by === CURRENT_STAFF.id);
+    const lockedToday = tRows.filter(r => r.status === 'locked').length;
+    const expiredToday = tRows.filter(r => r.status === 'expired').length;
+    const sumAmt = (list) => list.reduce((s,r) => s + Number(r.amount||0), 0);
+    window.CDV_TODAY_VERIFIED = verifiedToday;
+
     c.innerHTML = `
       <div class="panel">
         <h3>कॅश डिपॉझिट पडताळणी</h3>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
+          <div style="flex:1;min-width:150px;background:#f3f8f3;border-radius:8px;padding:10px 14px;">
+            <div style="font-size:11px;color:#666;">आजची एकूण कलेक्शन</div>
+            <div style="font-size:18px;font-weight:700;color:#1B2A4A;">${fmtMoney(sumAmt(verifiedToday))}</div>
+            <div style="font-size:11px;color:#888;">${verifiedToday.length} व्यवहार</div>
+          </div>
+          <div style="flex:1;min-width:150px;background:#f3f6fa;border-radius:8px;padding:10px 14px;">
+            <div style="font-size:11px;color:#666;">माझी आजची कलेक्शन</div>
+            <div style="font-size:18px;font-weight:700;color:#1B2A4A;">${fmtMoney(sumAmt(myVerifiedToday))}</div>
+            <div style="font-size:11px;color:#888;">${myVerifiedToday.length} व्यवहार</div>
+          </div>
+          <div style="flex:1;min-width:120px;background:#fdf6ec;border-radius:8px;padding:10px 14px;">
+            <div style="font-size:11px;color:#666;">प्रलंबित</div>
+            <div style="font-size:18px;font-weight:700;color:#1B2A4A;">${reqs.length}</div>
+          </div>
+          <div style="flex:1;min-width:120px;background:#fbeeee;border-radius:8px;padding:10px 14px;">
+            <div style="font-size:11px;color:#666;">आज लॉक / कालबाह्य</div>
+            <div style="font-size:18px;font-weight:700;color:#1B2A4A;">${lockedToday} / ${expiredToday}</div>
+          </div>
+        </div>
+        <button class="btn ghost small" onclick="exportTodayCollectionCsv()" style="margin-bottom:10px;">⬇ आजच्या कलेक्शनची Excel (CSV) फाईल</button>
         <p style="color:#777;font-size:12.5px;">सभासदाने सांगितलेल्या नोटा/नाणी तपशिलाशी काउंटरवरील प्रत्यक्ष रोख मोजून पडताळा (उजवीकडे "प्रत्यक्ष मोजणी" रकाने भरा), मग OTP टाकून "पडताळा" दाबा — खात्यात रक्कम आपोआप जमा होईल.</p>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px;">
-          <input type="text" id="cdv-search" placeholder="Transaction ID / OTP / सभासद क्र / नाव / मोबाईलने शोधा" oninput="cdvApplySearch()" style="flex:1;min-width:220px;padding:8px;border:1px solid #d8d8d8;border-radius:6px;">
+          <input type="text" id="cdv-search" placeholder="Transaction ID / सभासद क्र / नाव / मोबाईलने शोधा" oninput="cdvApplySearch()" style="flex:1;min-width:220px;padding:8px;border:1px solid #d8d8d8;border-radius:6px;">
           <button class="btn ghost small" onclick="startCcQrScanner()">📷 सभासदाचा QR स्कॅन करा</button>
         </div>
         <div id="cc-scanner-box" style="display:none;margin-top:10px;text-align:center;"></div>
@@ -3938,8 +4129,65 @@ async function verifyCashDeposit(requestId){
   const { data, error } = await sbClient.rpc('verify_cash_deposit', { p_request_id: requestId, p_otp: otp });
   if (error){ statusEl.innerHTML = errBanner('त्रुटी: ' + error.message); return; }
   if (!data.success){ statusEl.innerHTML = `<div class="banner warn">${data.error}</div>`; return; }
-  statusEl.innerHTML = `<div class="banner ok">✓ यशस्वीरित्या जमा झालं — नवीन शिल्लक: ${fmtMoney(data.new_balance)}</div>`;
-  setTimeout(() => render('cashdeposit'), 1200);
+  statusEl.innerHTML = `<div class="banner ok">
+    ✓ यशस्वीरित्या जमा झालं — नवीन शिल्लक: ${fmtMoney(data.new_balance)}
+    <div style="margin-top:8px;">
+      <button class="btn gold small" onclick="printCashDepositReceipt('${requestId}', ${data.new_balance})">🖨️ पावती छापा</button>
+      <button class="btn ghost small" onclick="render('cashdeposit')">यादी रिफ्रेश करा</button>
+    </div>
+  </div>`;
+}
+
+function printCashDepositReceipt(requestId, newBalance){
+  const r = CDV_REQS[requestId];
+  if (!r){ alert('विनंतीचा तपशील सापडला नाही — यादी रिफ्रेश करून पुन्हा प्रयत्न करा.'); return; }
+  sbClient.from('cash_deposit_audit_log').insert({
+    request_id: requestId, action: 'receipt_printed', actor_type: 'staff',
+    actor_id: CURRENT_STAFF?.id || null, actor_name: CURRENT_STAFF?.name || null,
+    details: { transaction_id: r.transaction_id }
+  }).then(()=>{});
+  const denomRows = (r.denomination||[]).map(d => `<tr><td>${d.label}</td><td style="text-align:right;">${d.count}</td><td style="text-align:right;">${fmtMoney(d.subtotal)}</td></tr>`).join('');
+  const now = new Date();
+  const qrPayload = JSON.stringify({ txn: r.transaction_id, amount: r.amount, member: r.members?.member_no, verified: true });
+  const w = window.open('', '_blank', 'width=420,height=700');
+  if (!w){ alert('पॉप-अप ब्लॉक झाला — कृपया या साईटसाठी पॉप-अप परवानगी द्या.'); return; }
+  w.document.write(`
+    <html><head><title>पावती - ${r.transaction_id||''}</title>
+    <meta charset="utf-8">
+    <style>
+      body{font-family:'Noto Sans Devanagari', Arial, sans-serif; padding:20px; color:#1B2A4A;}
+      h2{text-align:center;margin:0 0 2px;}
+      .sub{text-align:center;color:#777;font-size:12px;margin-bottom:14px;}
+      table{width:100%;border-collapse:collapse;font-size:13px;margin:10px 0;}
+      td,th{border:1px solid #ddd;padding:5px 8px;}
+      .row{display:flex;justify-content:space-between;font-size:13px;margin:3px 0;}
+      .stamp{text-align:center;margin-top:16px;font-size:11px;color:#2a7a2a;border:1px dashed #2a7a2a;padding:8px;border-radius:6px;}
+      #qr{text-align:center;margin-top:10px;}
+    </style>
+    </head><body>
+      <h2>पतसंस्था ERP</h2>
+      <div class="sub">Patsanstha Management — कॅश डिपॉझिट पावती</div>
+      <div class="row"><span>Receipt / Txn ID</span><b>${r.transaction_id||'-'}</b></div>
+      <div class="row"><span>दिनांक/वेळ</span><b>${now.toLocaleString('en-IN')}</b></div>
+      <div class="row"><span>सभासद</span><b>${r.members?.name||''} (${r.members?.member_no||''})</b></div>
+      <div class="row"><span>खाते क्र</span><b>${r.accounts?.account_no||''}</b></div>
+      <div class="row"><span>शाखा</span><b>${r.branches?.name||'-'}</b></div>
+      <div class="row"><span>हेतू</span><b>${r.purpose||'-'}</b></div>
+      <div class="row"><span>कॅशियर</span><b>${CURRENT_STAFF?.name||'-'}</b></div>
+      <table><thead><tr><th>दर्शनी किंमत</th><th>नग</th><th>रक्कम</th></tr></thead><tbody>${denomRows || '<tr><td colspan="3">तपशील नाही</td></tr>'}</tbody></table>
+      <div class="row"><span><b>एकूण रक्कम (अंकी)</b></span><b>${fmtMoney(r.amount)}</b></div>
+      <div style="font-size:12px;margin:4px 0;"><b>एकूण (अक्षरी):</b> ${amountToMarathiWords(r.amount)}</div>
+      <div class="row"><span>नवीन शिल्लक</span><b>${fmtMoney(newBalance)}</b></div>
+      <div id="qr"></div>
+      <div class="stamp">✓ डिजिटल पडताळणी — ${r.transaction_id||''} — ${now.toLocaleDateString('en-IN')}</div>
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"><\/script>
+      <script>
+        new QRCode(document.getElementById('qr'), { text: ${JSON.stringify(qrPayload)}, width:120, height:120 });
+        window.onload = () => setTimeout(() => window.print(), 300);
+      <\/script>
+    </body></html>
+  `);
+  w.document.close();
 }
 
 async function renderDataQuality(c){
@@ -4357,6 +4605,8 @@ function renderStaffBadge(){
   if (!CURRENT_STAFF){ el.style.display='none'; return; }
   el.style.display = 'flex';
   el.innerHTML = `${CURRENT_STAFF.name} <span class="role">${CURRENT_STAFF.role || 'भूमिका नाही'}</span> <button onclick="doLogout()">लॉगआउट</button>`;
+  const auditNav = document.getElementById('nav-auditlog');
+  if (auditNav) auditNav.style.display = (CURRENT_STAFF.role === 'admin') ? '' : 'none';
 }
 
 async function doLogout(){
