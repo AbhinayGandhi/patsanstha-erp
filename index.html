@@ -222,7 +222,7 @@ function renderLoginFormDefault(){
   `;
   document.getElementById('login-card-sub').textContent = 'सुरू ठेवण्यासाठी लॉगिन करा';
   document.getElementById('login-extra-links').style.display = '';
-  form.addEventListener('submit', handleLoginSubmit);
+  form.onsubmit = handleLoginSubmit;
 }
 function showForgotPasswordForm(){
   document.getElementById('login-extra-links').style.display = 'none';
@@ -4133,7 +4133,7 @@ async function approveStaffSignup(id){
   const { data: req, error: reqErr } = await sbClient.from('staff_signup_requests').select('*').eq('id', id).single();
   if (reqErr || !req){ alert('विनंती सापडली नाही.'); return; }
   const { error: staffErr } = await sbClient.from('staff').insert({
-    auth_user_id: req.auth_user_id, name: req.name, mobile: req.mobile,
+    auth_user_id: req.auth_user_id, name: req.name, mobile: req.mobile, email: req.email,
     role_id: roleSel.value, branch_id: branchSel.value || null, is_active: true
   });
   if (staffErr){ alert('स्टाफ तयार करता आलं नाही: ' + staffErr.message); return; }
@@ -4729,6 +4729,13 @@ async function start2FAEnrollment(){
   const el = document.getElementById('twofa-status');
   el.innerHTML = '<div class="empty">QR कोड तयार करत आहे...</div>';
   try {
+    // आधीचे अपूर्ण (unverified) प्रयत्न आधी साफ करा — जेणेकरून एकाच वेळी एकच सक्रिय secret राहील
+    const { data: existing } = await sbClient.auth.mfa.listFactors();
+    for (const f of (existing?.totp || [])){
+      if (f.status !== 'verified'){
+        await sbClient.auth.mfa.unenroll({ factorId: f.id });
+      }
+    }
     const { data, error } = await sbClient.auth.mfa.enroll({ factorType: 'totp' });
     if (error) throw error;
     const factorId = data.id;
@@ -4737,6 +4744,7 @@ async function start2FAEnrollment(){
       <p style="font-size:13px;">Google Authenticator / Authy ॲपने हा QR स्कॅन करा, नंतर ॲपमध्ये दिसणारा ६-अंकी कोड खाली टाका:</p>
       <div id="twofa-qr" style="margin:10px 0;"></div>
       <p style="font-size:11px;color:#999;">QR स्कॅन करता येत नसेल तर हा कोड मॅन्युअली टाका: <code>${data.totp.secret}</code></p>
+      <p style="font-size:11.5px;color:#2a7a2a;background:#eaf7ea;padding:8px;border-radius:6px;">ℹ️ हा QR/कोड <b>फक्त एकदाच</b>, तुमच्या फोनवरच्या Authenticator ॲपमध्ये स्कॅन करा. त्यानंतर लॅपटॉप किंवा मोबाईल — कुठूनही लॉगिन करताना तोच एक कोड वापरता येईल. वेगळ्या डिव्हाइससाठी परत सेट-अप करायची गरज नाही (आणि केल्यास आधीचा कोड काम करणार नाही).</p>
       <input type="text" id="twofa-verify-code" placeholder="६-अंकी कोड" maxlength="6" style="padding:8px;border:1px solid #d8d8d8;border-radius:6px;width:140px;">
       <button class="btn gold small" id="btn-verify-2fa">पडताळा व सुरू करा</button>
       <div class="err" id="twofa-enroll-err" style="color:#b23b3b;font-size:12.5px;margin-top:8px;"></div>
@@ -4948,13 +4956,24 @@ async function completeLoginAfterAuth(){
 /* init */
 (async function init(){
   await initSupabase();
-  document.getElementById('login-form').addEventListener('submit', handleLoginSubmit);
+  document.getElementById('login-form').onsubmit = handleLoginSubmit;
   if (!sbClient){ showLoginScreen(); return; } // Supabase जोडणीच झाली नाही तर लॉगिनही शक्य नाही
   try {
     const { data: { session } } = await sbClient.auth.getSession();
     if (session){
       const profile = await fetchStaffProfile(session.user.id);
       if (profile && profile.is_active){
+        const { data: aalData } = await sbClient.auth.mfa.getAuthenticatorAssuranceLevel();
+        if (aalData && aalData.nextLevel === 'aal2' && aalData.currentLevel !== 'aal2'){
+          // 2FA आवश्यक आहे पण या session मध्ये अजून पूर्ण झालेली नाही — रिफ्रेशवर सरळ आत सोडायचं नाही
+          PENDING_LOGIN_EMAIL = session.user.email;
+          const { data: factors } = await sbClient.auth.mfa.listFactors();
+          const totpFactor = (factors?.totp || []).find(f => f.status === 'verified');
+          showLoginScreen();
+          if (totpFactor) showMfaChallengeForm(totpFactor);
+          else showEmailOtpForm(session.user.email, null);
+          return;
+        }
         CURRENT_STAFF = profile;
         renderStaffBadge();
         hideLoginScreen();
