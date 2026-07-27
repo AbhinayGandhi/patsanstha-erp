@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>पतसंस्था ERP</title>
+<title>कै. रामराव वि. पाटील नागरी सहकारी पतसंस्था मर्या., कुंभारगांव, ता. पाटण, जि. सातारा</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Tiro+Devanagari+Marathi&family=Noto+Sans+Devanagari:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script>
@@ -178,25 +178,133 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <div id="login-screen">
   <div class="login-card">
     <div class="seal">प</div>
-    <h2>पतसंस्था ERP</h2>
-    <div class="sub">सुरू ठेवण्यासाठी लॉगिन करा</div>
+    <h2>कै. रामराव वि. पाटील नागरी सहकारी पतसंस्था मर्या.</h2>
+    <div style="text-align:center;font-size:11px;color:#777;margin-top:-4px;margin-bottom:8px;">कुंभारगांव, ता. पाटण, जि. सातारा</div>
+    <div class="sub" id="login-card-sub">सुरू ठेवण्यासाठी लॉगिन करा</div>
     <form id="login-form">
       <label>ईमेल</label>
       <input type="email" id="login-email" autocomplete="username" required>
       <label>पासवर्ड</label>
-      <input type="password" id="login-password" autocomplete="current-password" required>
+      <div style="position:relative;">
+        <input type="password" id="login-password" autocomplete="current-password" required style="width:100%;box-sizing:border-box;padding-right:38px;">
+        <button type="button" onclick="togglePwdVisibility('login-password', this)" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:16px;" title="पासवर्ड दाखवा/लपवा">👁</button>
+      </div>
       <button type="submit" id="login-btn">लॉगिन करा</button>
       <div class="login-err" id="login-err"></div>
     </form>
+    <div id="login-extra-links" style="text-align:center;margin-top:12px;font-size:12.5px;">
+      <button type="button" onclick="showForgotPasswordForm()" style="background:none;border:none;color:#1B2A4A;text-decoration:underline;cursor:pointer;font-size:12.5px;">पासवर्ड विसरलात?</button>
+      &nbsp;|&nbsp;
+      <button type="button" onclick="showStaffSignupForm()" style="background:none;border:none;color:#1B2A4A;text-decoration:underline;cursor:pointer;font-size:12.5px;">नवीन कर्मचारी? इथे नोंदणी करा</button>
+    </div>
   </div>
 </div>
+
+<script>
+function togglePwdVisibility(inputId, btnEl){
+  const inp = document.getElementById(inputId);
+  if (!inp) return;
+  inp.type = (inp.type === 'password') ? 'text' : 'password';
+  if (btnEl) btnEl.textContent = (inp.type === 'password') ? '👁' : '🙈';
+}
+function renderLoginFormDefault(){
+  const form = document.getElementById('login-form');
+  form.innerHTML = `
+    <label>ईमेल</label>
+    <input type="email" id="login-email" autocomplete="username" required>
+    <label>पासवर्ड</label>
+    <div style="position:relative;">
+      <input type="password" id="login-password" autocomplete="current-password" required style="width:100%;box-sizing:border-box;padding-right:38px;">
+      <button type="button" onclick="togglePwdVisibility('login-password', this)" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:16px;" title="पासवर्ड दाखवा/लपवा">👁</button>
+    </div>
+    <button type="submit" id="login-btn">लॉगिन करा</button>
+    <div class="login-err" id="login-err"></div>
+  `;
+  document.getElementById('login-card-sub').textContent = 'सुरू ठेवण्यासाठी लॉगिन करा';
+  document.getElementById('login-extra-links').style.display = '';
+  form.addEventListener('submit', handleLoginSubmit);
+}
+function showForgotPasswordForm(){
+  document.getElementById('login-extra-links').style.display = 'none';
+  document.getElementById('login-card-sub').textContent = 'पासवर्ड रीसेट';
+  const form = document.getElementById('login-form');
+  form.innerHTML = `
+    <label>नोंदणीकृत ईमेल</label>
+    <input type="email" id="fp-email" required>
+    <button type="submit" id="fp-btn">रीसेट लिंक पाठवा</button>
+    <button type="button" onclick="renderLoginFormDefault()" style="margin-top:8px;background:none;border:none;color:#1B2A4A;text-decoration:underline;cursor:pointer;font-size:12.5px;">मागे लॉगिनकडे जा</button>
+    <div class="login-err" id="login-err"></div>
+    <div id="fp-status" style="font-size:12px;color:#777;margin-top:8px;"></div>
+  `;
+  form.onsubmit = async (ev) => {
+    ev.preventDefault();
+    const email = document.getElementById('fp-email').value.trim();
+    const statusEl = document.getElementById('fp-status');
+    const btn = document.getElementById('fp-btn');
+    btn.disabled = true; btn.textContent = 'पाठवत आहे...';
+    const { error } = await sbClient.auth.resetPasswordForEmail(email, { redirectTo: window.location.href });
+    btn.disabled = false; btn.textContent = 'रीसेट लिंक पाठवा';
+    statusEl.textContent = error ? ('त्रुटी: ' + error.message) : `${email} वर पासवर्ड रीसेट लिंक पाठवली आहे — ई-मेल तपासा (स्पॅम फोल्डरही बघा).`;
+  };
+}
+function showStaffSignupForm(){
+  document.getElementById('login-extra-links').style.display = 'none';
+  document.getElementById('login-card-sub').textContent = 'नवीन कर्मचारी नोंदणी';
+  const form = document.getElementById('login-form');
+  form.innerHTML = `
+    <label>पूर्ण नाव</label>
+    <input type="text" id="su-name" required>
+    <label>मोबाईल नंबर</label>
+    <input type="tel" id="su-mobile" required>
+    <label>ईमेल</label>
+    <input type="email" id="su-email" autocomplete="username" required>
+    <label>पासवर्ड तयार करा</label>
+    <div style="position:relative;">
+      <input type="password" id="su-password" autocomplete="new-password" required style="width:100%;box-sizing:border-box;padding-right:38px;">
+      <button type="button" onclick="togglePwdVisibility('su-password', this)" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:16px;">👁</button>
+    </div>
+    <button type="submit" id="su-btn">नोंदणी करा</button>
+    <button type="button" onclick="renderLoginFormDefault()" style="margin-top:8px;background:none;border:none;color:#1B2A4A;text-decoration:underline;cursor:pointer;font-size:12.5px;">मागे लॉगिनकडे जा</button>
+    <div class="login-err" id="login-err"></div>
+    <div id="su-status" style="font-size:12px;color:#777;margin-top:8px;"></div>
+  `;
+  form.onsubmit = async (ev) => {
+    ev.preventDefault();
+    const errEl = document.getElementById('login-err');
+    const statusEl = document.getElementById('su-status');
+    errEl.textContent = ''; statusEl.textContent = '';
+    const name = document.getElementById('su-name').value.trim();
+    const mobile = document.getElementById('su-mobile').value.trim();
+    const email = document.getElementById('su-email').value.trim();
+    const password = document.getElementById('su-password').value;
+    if (!name || !mobile || !email || password.length < 6){ errEl.textContent = 'सगळी माहिती बरोबर भरा (पासवर्ड किमान ६ अक्षरी).'; return; }
+    const btn = document.getElementById('su-btn');
+    btn.disabled = true; btn.textContent = 'नोंदणी करत आहे...';
+    try {
+      const { data, error } = await sbClient.auth.signUp({ email, password, options: { data: { name } } });
+      if (error) throw error;
+      const authUserId = data.user?.id;
+      if (!authUserId) throw new Error('खातं तयार झालं नाही — पुन्हा प्रयत्न करा.');
+      const { error: reqError } = await sbClient.from('staff_signup_requests')
+        .insert({ auth_user_id: authUserId, name, mobile, email, status: 'pending' });
+      if (reqError) throw reqError;
+      statusEl.innerHTML = `<div class="banner ok">✓ नोंदणी झाली — तुमची विनंती Admin कडे पडताळणीसाठी पाठवली आहे. Admin ने मंजूर केल्यावरच लॉगिन करता येईल.</div>`;
+      setTimeout(renderLoginFormDefault, 3000);
+    } catch(e){
+      errEl.textContent = 'त्रुटी: ' + e.message;
+    } finally {
+      btn.disabled = false; btn.textContent = 'नोंदणी करा';
+    }
+  };
+}
+</script>
 
 <div class="shell">
   <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
   <div class="sidebar" id="sidebar">
     <div class="brand">
       <div class="seal">प</div>
-      <div class="brand-text">पतसंस्था ERP<small>Patsanstha Management</small></div>
+      <div class="brand-text">कै. रामराव वि. पाटील नागरी सहकारी पतसंस्था मर्या.<small>कुंभारगांव, ता. पाटण, जि. सातारा</small></div>
     </div>
     <nav id="nav">
       <a data-view="dashboard" class="active"><span class="ic">◆</span> डॅशबोर्ड</a>
@@ -217,6 +325,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
       <a data-view="cashdeposit"><span class="ic">💵</span> कॅश डिपॉझिट पडताळणी</a>
       <a data-view="cashdepositreport"><span class="ic">📊</span> कॅश डिपॉझिट रिपोर्ट</a>
       <a data-view="auditlog" id="nav-auditlog" style="display:none;"><span class="ic">📜</span> ऑडिट लॉग</a>
+      <a data-view="staffmanage" id="nav-staffmanage" style="display:none;"><span class="ic">🧑‍💼</span> स्टाफ व्यवस्थापन</a>
       <a data-view="loanapps"><span class="ic">📝</span> कर्ज अर्ज</a>
       <a data-view="grievances"><span class="ic">💬</span> तक्रारी</a>
       <a data-view="standing"><span class="ic">🔁</span> स्थायी सूचना</a>
@@ -522,6 +631,7 @@ async function render(view, param){
   if (view === 'cashdeposit') return renderCashDepositVerify(c);
   if (view === 'cashdepositreport') return renderCashDepositReport(c);
   if (view === 'auditlog') return renderAuditLog(c);
+  if (view === 'staffmanage') return renderStaffManage(c);
   if (view === 'loanapps') return renderLoanApplications(c);
   if (view === 'grievances') return renderGrievancesAdmin(c);
   if (view === 'standing') return renderStandingInstructionsAdmin(c);
@@ -1154,7 +1264,11 @@ async function renderStatement(accId){
     c.innerHTML = `
       <div class="panel">
         <div class="print-head">
-          <h2>पतसंस्था ERP</h2>
+          <h2>कै. रामराव वि. पाटील नागरी सहकारी पतसंस्था मर्या.</h2>
+      <div style="text-align:center;font-size:11px;color:#777;margin-top:-4px;margin-bottom:8px;">कुंभारगांव, ता. पाटण, जि. सातारा</div>
+        <div style="text-align:center;font-size:11px;color:#777;margin-top:-4px;margin-bottom:8px;">कुंभारगांव, ता. पाटण, जि. सातारा</div>
+          <div style="text-align:center;font-size:11px;color:#777;margin-top:-4px;margin-bottom:8px;">कुंभारगांव, ता. पाटण, जि. सातारा</div>
+    <div style="text-align:center;font-size:11px;color:#777;margin-top:-4px;margin-bottom:8px;">कुंभारगांव, ता. पाटण, जि. सातारा</div>
           <div class="sub">खाते स्टेटमेंट &nbsp;|&nbsp; छापण्याचा दिनांक: ${new Date().toLocaleDateString('en-IN')}</div>
         </div>
         <div class="panel-head">
@@ -1214,7 +1328,11 @@ async function renderDayBook(c, dateOverride){
     c.innerHTML = `
       <div class="panel">
         <div class="print-head">
-          <h2>पतसंस्था ERP</h2>
+          <h2>कै. रामराव वि. पाटील नागरी सहकारी पतसंस्था मर्या.</h2>
+      <div style="text-align:center;font-size:11px;color:#777;margin-top:-4px;margin-bottom:8px;">कुंभारगांव, ता. पाटण, जि. सातारा</div>
+        <div style="text-align:center;font-size:11px;color:#777;margin-top:-4px;margin-bottom:8px;">कुंभारगांव, ता. पाटण, जि. सातारा</div>
+          <div style="text-align:center;font-size:11px;color:#777;margin-top:-4px;margin-bottom:8px;">कुंभारगांव, ता. पाटण, जि. सातारा</div>
+    <div style="text-align:center;font-size:11px;color:#777;margin-top:-4px;margin-bottom:8px;">कुंभारगांव, ता. पाटण, जि. सातारा</div>
           <div class="sub">व्यवहार / Day Book — दिनांक: ${dayBookDate} &nbsp;|&nbsp; छापण्याचा दिनांक: ${new Date().toLocaleDateString('en-IN')}</div>
         </div>
         <div class="panel-head">
@@ -1275,7 +1393,10 @@ function reportShell(title, subtitle, controlsHtml, bodyHtml){
   return `
     <div class="panel">
       <div class="print-head">
-        <h2>पतसंस्था ERP</h2>
+        <h2>कै. रामराव वि. पाटील नागरी सहकारी पतसंस्था मर्या.</h2>
+      <div style="text-align:center;font-size:11px;color:#777;margin-top:-4px;margin-bottom:8px;">कुंभारगांव, ता. पाटण, जि. सातारा</div>
+        <div style="text-align:center;font-size:11px;color:#777;margin-top:-4px;margin-bottom:8px;">कुंभारगांव, ता. पाटण, जि. सातारा</div>
+    <div style="text-align:center;font-size:11px;color:#777;margin-top:-4px;margin-bottom:8px;">कुंभारगांव, ता. पाटण, जि. सातारा</div>
         <div class="sub">${title}${subtitle?(' — ' + subtitle):''} &nbsp;|&nbsp; छापण्याचा दिनांक: ${new Date().toLocaleDateString('en-IN')}</div>
       </div>
       <div class="panel-head">
@@ -3020,7 +3141,10 @@ async function renderReceiptPrint(c, member, amount, narration, dateStr){
   c.innerHTML = `
     <div class="panel">
       <div class="print-head">
-        <h2>पतसंस्था ERP</h2>
+        <h2>कै. रामराव वि. पाटील नागरी सहकारी पतसंस्था मर्या.</h2>
+      <div style="text-align:center;font-size:11px;color:#777;margin-top:-4px;margin-bottom:8px;">कुंभारगांव, ता. पाटण, जि. सातारा</div>
+        <div style="text-align:center;font-size:11px;color:#777;margin-top:-4px;margin-bottom:8px;">कुंभारगांव, ता. पाटण, जि. सातारा</div>
+    <div style="text-align:center;font-size:11px;color:#777;margin-top:-4px;margin-bottom:8px;">कुंभारगांव, ता. पाटण, जि. सातारा</div>
         <div class="sub">पावती (Receipt)</div>
       </div>
       <div class="no-print" style="margin-bottom:14px;display:flex;gap:8px;">
@@ -3077,7 +3201,11 @@ async function renderCertificatePrint(memberId, certType){
     c.innerHTML = `
       <div class="panel">
         <div class="print-head">
-          <h2>पतसंस्था ERP</h2>
+          <h2>कै. रामराव वि. पाटील नागरी सहकारी पतसंस्था मर्या.</h2>
+      <div style="text-align:center;font-size:11px;color:#777;margin-top:-4px;margin-bottom:8px;">कुंभारगांव, ता. पाटण, जि. सातारा</div>
+        <div style="text-align:center;font-size:11px;color:#777;margin-top:-4px;margin-bottom:8px;">कुंभारगांव, ता. पाटण, जि. सातारा</div>
+          <div style="text-align:center;font-size:11px;color:#777;margin-top:-4px;margin-bottom:8px;">कुंभारगांव, ता. पाटण, जि. सातारा</div>
+    <div style="text-align:center;font-size:11px;color:#777;margin-top:-4px;margin-bottom:8px;">कुंभारगांव, ता. पाटण, जि. सातारा</div>
           <div class="sub">${certType==='membership' ? 'सभासदत्व प्रमाणपत्र' : 'शिल्लक प्रमाणपत्र'} &nbsp;|&nbsp; ${member.branches?.name||''}</div>
         </div>
         <div class="no-print" style="margin-bottom:14px;display:flex;gap:8px;">
@@ -3940,6 +4068,86 @@ function exportTodayCollectionCsv(){
   a.click();
   URL.revokeObjectURL(url);
 }
+async function renderStaffManage(c){
+  if (!CURRENT_STAFF || CURRENT_STAFF.role !== 'admin'){
+    c.innerHTML = errBanner('ही सुविधा फक्त Admin साठी आहे.');
+    return;
+  }
+  c.innerHTML = '<div class="empty">लोड होत आहे...</div>';
+  try {
+    const [{ data: reqs, error }, { data: roles }, { data: branches }] = await Promise.all([
+      sbClient.from('staff_signup_requests').select('*').order('requested_at', { ascending: false }),
+      sbClient.from('staff_roles').select('id,name').order('name'),
+      sbClient.from('branches').select('id,name').order('name')
+    ]);
+    if (error) throw error;
+    const roleOpts = (roles||[]).map(r => `<option value="${r.id}">${r.name}</option>`).join('');
+    const branchOpts = (branches||[]).map(b => `<option value="${b.id}">${b.name}</option>`).join('');
+    const statusLabel = (s) => ({ pending:'⏳ प्रलंबित', approved:'✅ मंजूर', rejected:'🚫 नाकारली' }[s] || s);
+    const rows = (reqs||[]).map(r => `
+      <tr>
+        <td>${new Date(r.requested_at).toLocaleString('en-IN')}</td>
+        <td>${r.name}</td>
+        <td>${r.mobile||''}</td>
+        <td>${r.email}</td>
+        <td>${statusLabel(r.status)}</td>
+        <td>${r.status==='pending' ? `
+          <select id="role-${r.id}" style="padding:4px;">${roleOpts || '<option value="">-- आधी भूमिका जोडा --</option>'}</select>
+          <select id="branch-${r.id}" style="padding:4px;">${branchOpts}</select>
+          <button class="btn gold small" onclick="approveStaffSignup('${r.id}')">मंजूर करा</button>
+          <button class="btn ghost small" onclick="rejectStaffSignup('${r.id}')">नाकारा</button>
+        ` : ''}</td>
+      </tr>`).join('');
+    c.innerHTML = `
+      <div class="panel">
+        <h3>स्टाफ व्यवस्थापन — नवीन नोंदणी विनंत्या</h3>
+        <p style="color:#777;font-size:12.5px;">नवीन कर्मचाऱ्याने स्वतः लॉगिन स्क्रीनवरून नोंदणी केल्यावर इथे दिसेल — भूमिका व शाखा निवडून "मंजूर करा" दाबा, मगच त्याचं लॉगिन काम करेल.</p>
+        <div style="margin-bottom:14px;background:#f7f5ee;padding:10px;border-radius:8px;">
+          <b style="font-size:12.5px;">भूमिका (Roles) व्यवस्थापन:</b><br>
+          <input type="text" id="new-role-name" placeholder="नवीन भूमिकेचं नाव (उदा. cashier)" style="padding:6px;border:1px solid #ccc;border-radius:6px;margin-top:6px;">
+          <button class="btn ghost small" onclick="addStaffRole()">+ नवीन भूमिका जोडा</button>
+          <div style="font-size:11.5px;color:#777;margin-top:6px;">सध्याच्या भूमिका: ${(roles||[]).map(r=>r.name).join(', ') || 'अजून कुठलीही नाही'}</div>
+        </div>
+        <div class="table-scroll">
+          <table class="data-table">
+            <thead><tr><th>वेळ</th><th>नाव</th><th>मोबाईल</th><th>ईमेल</th><th>स्थिती</th><th>कृती</th></tr></thead>
+            <tbody>${rows || '<tr><td colspan="6" class="empty">कुठलीही विनंती नाही.</td></tr>'}</tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  } catch(e){ c.innerHTML = errBanner('त्रुटी: ' + e.message); }
+}
+async function addStaffRole(){
+  const inp = document.getElementById('new-role-name');
+  const name = inp.value.trim();
+  if (!name) return;
+  const { error } = await sbClient.from('staff_roles').insert({ name });
+  if (error){ alert('त्रुटी: ' + error.message); return; }
+  renderStaffManage(document.getElementById('content'));
+}
+async function approveStaffSignup(id){
+  const roleSel = document.getElementById('role-' + id);
+  const branchSel = document.getElementById('branch-' + id);
+  if (!roleSel || !roleSel.value){ alert('आधी भूमिका निवडा (किंवा वरून नवीन भूमिका जोडा).'); return; }
+  const { data: req, error: reqErr } = await sbClient.from('staff_signup_requests').select('*').eq('id', id).single();
+  if (reqErr || !req){ alert('विनंती सापडली नाही.'); return; }
+  const { error: staffErr } = await sbClient.from('staff').insert({
+    auth_user_id: req.auth_user_id, name: req.name, mobile: req.mobile,
+    role_id: roleSel.value, branch_id: branchSel.value || null, is_active: true
+  });
+  if (staffErr){ alert('स्टाफ तयार करता आलं नाही: ' + staffErr.message); return; }
+  await sbClient.from('staff_signup_requests').update({
+    status:'approved', reviewed_at: new Date().toISOString(),
+    assigned_role: roleSel.value, assigned_branch_id: branchSel.value || null
+  }).eq('id', id);
+  renderStaffManage(document.getElementById('content'));
+}
+async function rejectStaffSignup(id){
+  if (!confirm('ही नोंदणी नाकारायची आहे का?')) return;
+  await sbClient.from('staff_signup_requests').update({ status:'rejected', reviewed_at: new Date().toISOString() }).eq('id', id);
+  renderStaffManage(document.getElementById('content'));
+}
 async function renderAuditLog(c){
   if (!CURRENT_STAFF || CURRENT_STAFF.role !== 'admin'){
     c.innerHTML = errBanner('ही सुविधा फक्त Admin साठी आहे.');
@@ -4165,8 +4373,10 @@ function printCashDepositReceipt(requestId, newBalance){
       #qr{text-align:center;margin-top:10px;}
     </style>
     </head><body>
-      <h2>पतसंस्था ERP</h2>
-      <div class="sub">Patsanstha Management — कॅश डिपॉझिट पावती</div>
+      <h2>कै. रामराव वि. पाटील नागरी सहकारी पतसंस्था मर्या.</h2>
+      <div style="text-align:center;font-size:11px;color:#777;margin-top:-4px;margin-bottom:8px;">कुंभारगांव, ता. पाटण, जि. सातारा</div>
+    <div style="text-align:center;font-size:11px;color:#777;margin-top:-4px;margin-bottom:8px;">कुंभारगांव, ता. पाटण, जि. सातारा</div>
+      <div class="sub">कुंभारगांव, ता. पाटण, जि. सातारा — कॅश डिपॉझिट पावती</div>
       <div class="row"><span>Receipt / Txn ID</span><b>${r.transaction_id||'-'}</b></div>
       <div class="row"><span>दिनांक/वेळ</span><b>${now.toLocaleString('en-IN')}</b></div>
       <div class="row"><span>सभासद</span><b>${r.members?.name||''} (${r.members?.member_no||''})</b></div>
@@ -4487,9 +4697,6 @@ async function renderSettings(c){
       <p style="color:#777;font-size:12.5px;">Google Authenticator / Authy सारखं ॲप वापरून, पासवर्डसोबत ६-अंकी कोडचीही पडताळणी — खाते जास्त सुरक्षित होते.</p>
       <div id="twofa-status">तपासत आहे...</div>
     </div>
-    <div class="panel" style="margin-top:14px;"><h3>पुढील टप्पे</h3>
-      <ul><li>Transactions / Day Book</li><li>Loan installment auto-schedule</li><li>Reports</li></ul>
-    </div>
   `;
   document.getElementById('btn-manual-backup').addEventListener('click', runManualBackup);
   render2FAStatus();
@@ -4607,6 +4814,8 @@ function renderStaffBadge(){
   el.innerHTML = `${CURRENT_STAFF.name} <span class="role">${CURRENT_STAFF.role || 'भूमिका नाही'}</span> <button onclick="doLogout()">लॉगआउट</button>`;
   const auditNav = document.getElementById('nav-auditlog');
   if (auditNav) auditNav.style.display = (CURRENT_STAFF.role === 'admin') ? '' : 'none';
+  const staffNav = document.getElementById('nav-staffmanage');
+  if (staffNav) staffNav.style.display = (CURRENT_STAFF.role === 'admin') ? '' : 'none';
 }
 
 async function doLogout(){
@@ -4630,6 +4839,7 @@ function resetIdleTimer(){
   document.addEventListener(evt, resetIdleTimer, { passive: true })
 );
 
+let PENDING_LOGIN_EMAIL = null;
 async function handleLoginSubmit(ev){
   ev.preventDefault();
   const btn = document.getElementById('login-btn');
@@ -4642,13 +4852,15 @@ async function handleLoginSubmit(ev){
     const { data, error } = await sbClient.auth.signInWithPassword({ email, password });
     if (error) { errEl.textContent = 'लॉगिन अयशस्वी: चुकीचा ईमेल/पासवर्ड.'; return; }
 
-    // 2FA सुरू असेल तर (aal1 → aal2 आवश्यक असेल तर) आधी ६-अंकी कोड मागतो
-    const { data: aalData } = await sbClient.auth.mfa.getAuthenticatorAssuranceLevel();
-    if (aalData && aalData.nextLevel === 'aal2' && aalData.currentLevel !== 'aal2'){
-      showMfaChallengeForm();
-      return;
+    PENDING_LOGIN_EMAIL = email;
+    // पासवर्ड बरोबर असला तरी दुसरा टप्पा (2FA) नेहमी आवश्यक — Authenticator सेट-अप असेल तर तो, नसेल तर ई-मेल OTP
+    const { data: factors } = await sbClient.auth.mfa.listFactors();
+    const totpFactor = (factors?.totp || []).find(f => f.status === 'verified');
+    if (totpFactor){
+      showMfaChallengeForm(totpFactor);
+    } else {
+      showEmailOtpForm(email, null);
     }
-    await completeLoginAfterAuth();
   } catch(e){
     errEl.textContent = 'अनपेक्षित एरर: ' + e.message;
   } finally {
@@ -4656,11 +4868,44 @@ async function handleLoginSubmit(ev){
   }
 }
 
-function showMfaChallengeForm(){
+function showEmailOtpForm(email, totpFactorForSwitchBack){
+  document.getElementById('login-form').innerHTML = `
+    <label>ई-मेलवर पाठवलेला ६-अंकी कोड</label>
+    <input type="text" id="email-otp-code" maxlength="6" autocomplete="one-time-code" required>
+    <button type="submit" id="login-btn">पडताळा</button>
+    <button type="button" id="resend-email-otp-btn" style="margin-top:6px;background:none;border:none;color:#1B2A4A;text-decoration:underline;cursor:pointer;font-size:12px;padding:4px 0;">पुन्हा कोड पाठवा</button>
+    ${totpFactorForSwitchBack ? `<button type="button" id="use-totp-btn" style="margin-top:6px;background:none;border:none;color:#1B2A4A;text-decoration:underline;cursor:pointer;font-size:12px;padding:4px 0;">किंवा Authenticator कोड वापरा</button>` : ''}
+    <div class="login-err" id="login-err"></div>
+    <div style="font-size:11px;color:#777;margin-top:6px;" id="otp-sent-msg">कोड पाठवत आहे...</div>
+  `;
+  const sendEmailOtp = async () => {
+    const msgEl = document.getElementById('otp-sent-msg');
+    if (msgEl) msgEl.textContent = 'कोड पाठवत आहे...';
+    const { error } = await sbClient.auth.signInWithOtp({ email, options: { shouldCreateUser: false } });
+    if (msgEl) msgEl.textContent = error ? ('कोड पाठवता आला नाही: ' + error.message) : `${email} या ई-मेलवर ६-अंकी कोड पाठवला आहे.`;
+  };
+  sendEmailOtp();
+  document.getElementById('resend-email-otp-btn').onclick = sendEmailOtp;
+  document.getElementById('login-form').onsubmit = async (ev) => {
+    ev.preventDefault();
+    const errEl = document.getElementById('login-err');
+    const code = document.getElementById('email-otp-code').value.trim();
+    if (!code || code.length !== 6){ errEl.textContent = '६-अंकी कोड बरोबर टाका.'; return; }
+    const { error: verifyErr } = await sbClient.auth.verifyOtp({ email, token: code, type: 'email' });
+    if (verifyErr){ errEl.textContent = 'चूक: ' + verifyErr.message; return; }
+    await completeLoginAfterAuth();
+  };
+  if (totpFactorForSwitchBack){
+    document.getElementById('use-totp-btn').onclick = () => showMfaChallengeForm(totpFactorForSwitchBack);
+  }
+}
+
+function showMfaChallengeForm(factor){
   document.getElementById('login-form').innerHTML = `
     <label>Authenticator ॲपमधला ६-अंकी कोड</label>
     <input type="text" id="mfa-code" maxlength="6" autocomplete="one-time-code" required>
     <button type="submit" id="login-btn">पडताळा</button>
+    <button type="button" id="use-email-btn" style="margin-top:6px;background:none;border:none;color:#1B2A4A;text-decoration:underline;cursor:pointer;font-size:12px;padding:4px 0;">किंवा ई-मेलवर कोड पाठवा</button>
     <div class="login-err" id="login-err"></div>
   `;
   document.getElementById('login-form').onsubmit = async (ev) => {
@@ -4669,9 +4914,6 @@ function showMfaChallengeForm(){
     const code = document.getElementById('mfa-code').value.trim();
     if (!code || code.length !== 6){ errEl.textContent = '६-अंकी कोड बरोबर टाका.'; return; }
     try {
-      const { data: factors } = await sbClient.auth.mfa.listFactors();
-      const factor = (factors.totp || []).find(f => f.status === 'verified');
-      if (!factor){ errEl.textContent = '2FA फॅक्टर सापडला नाही.'; return; }
       const { data: chal, error: chalErr } = await sbClient.auth.mfa.challenge({ factorId: factor.id });
       if (chalErr) throw chalErr;
       const { error: verifyErr } = await sbClient.auth.mfa.verify({ factorId: factor.id, challengeId: chal.id, code });
@@ -4679,6 +4921,7 @@ function showMfaChallengeForm(){
       await completeLoginAfterAuth();
     } catch(e){ errEl.textContent = 'चूक: ' + e.message; }
   };
+  document.getElementById('use-email-btn').onclick = () => showEmailOtpForm(PENDING_LOGIN_EMAIL, factor);
 }
 
 async function completeLoginAfterAuth(){
