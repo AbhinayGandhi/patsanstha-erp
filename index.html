@@ -326,6 +326,7 @@ function showStaffSignupForm(){
       <a data-view="cashdepositreport"><span class="ic">📊</span> कॅश डिपॉझिट रिपोर्ट</a>
       <a data-view="auditlog" id="nav-auditlog" style="display:none;"><span class="ic">📜</span> ऑडिट लॉग</a>
       <a data-view="staffmanage" id="nav-staffmanage" style="display:none;"><span class="ic">🧑‍💼</span> स्टाफ व्यवस्थापन</a>
+      <a data-view="rolepermissions" id="nav-rolepermissions" style="display:none;"><span class="ic">🔐</span> भूमिका परवानग्या</a>
       <a data-view="loanapps"><span class="ic">📝</span> कर्ज अर्ज</a>
       <a data-view="grievances"><span class="ic">💬</span> तक्रारी</a>
       <a data-view="standing"><span class="ic">🔁</span> स्थायी सूचना</a>
@@ -616,6 +617,14 @@ async function loadRefData(){
 async function render(view, param){
   const c = document.getElementById('content');
   if (typeof stopCcQrScanner === 'function') stopCcQrScanner();
+  if (ALLOWED_VIEWS !== null && !ALLOWED_VIEWS.has(view) && !['auditlog','staffmanage','rolepermissions'].includes(view)){
+    c.innerHTML = errBanner('⛔ या विभागात प्रवेश करण्याची परवानगी तुमच्या भूमिकेला नाही.');
+    return;
+  }
+  if ((view === 'auditlog' || view === 'staffmanage' || view === 'rolepermissions') && (!CURRENT_STAFF || CURRENT_STAFF.role !== 'admin')){
+    c.innerHTML = errBanner('⛔ ही सुविधा फक्त Admin साठी आहे.');
+    return;
+  }
   c.innerHTML = '<div class="empty">लोड होत आहे...</div>';
   if (view === 'dashboard') return renderDashboard(c);
   if (view === 'members') return renderMembers(c);
@@ -632,6 +641,7 @@ async function render(view, param){
   if (view === 'cashdepositreport') return renderCashDepositReport(c);
   if (view === 'auditlog') return renderAuditLog(c);
   if (view === 'staffmanage') return renderStaffManage(c);
+  if (view === 'rolepermissions') return renderRolePermissions(c);
   if (view === 'loanapps') return renderLoanApplications(c);
   if (view === 'grievances') return renderGrievancesAdmin(c);
   if (view === 'standing') return renderStandingInstructionsAdmin(c);
@@ -4075,15 +4085,36 @@ async function renderStaffManage(c){
   }
   c.innerHTML = '<div class="empty">लोड होत आहे...</div>';
   try {
-    const [{ data: reqs, error }, { data: roles }, { data: branches }] = await Promise.all([
+    const [{ data: reqs, error }, { data: roles }, { data: branches }, { data: staffList }] = await Promise.all([
       sbClient.from('staff_signup_requests').select('*').order('requested_at', { ascending: false }),
       sbClient.from('staff_roles').select('id,name').order('name'),
-      sbClient.from('branches').select('id,name').order('name')
+      sbClient.from('branches').select('id,name').order('name'),
+      sbClient.from('staff').select('id,name,mobile,email,branch_id,role_id,is_active,staff_roles(name),branches(name)').order('name')
     ]);
     if (error) throw error;
     const roleOpts = (roles||[]).map(r => `<option value="${r.id}">${r.name}</option>`).join('');
     const branchOpts = (branches||[]).map(b => `<option value="${b.id}">${b.name}</option>`).join('');
     const statusLabel = (s) => ({ pending:'⏳ प्रलंबित', approved:'✅ मंजूर', rejected:'🚫 नाकारली' }[s] || s);
+    const staffRows = (staffList||[]).map(s => `
+      <tr>
+        <td>${s.name}</td>
+        <td>${s.staff_roles?.name || '-'}</td>
+        <td>${s.branches?.name || '-'}</td>
+        <td>${s.is_active ? '✅ सक्रिय' : '🚫 निष्क्रिय'}</td>
+        <td>
+          <select id="chrole-${s.id}" style="padding:4px;">
+            <option value="">-- भूमिका निवडा --</option>
+            ${(roles||[]).map(r => `<option value="${r.id}" ${r.id===s.role_id?'selected':''}>${r.name}</option>`).join('')}
+          </select>
+          <button class="btn gold small" onclick="changeStaffRole('${s.id}')">भूमिका बदला</button>
+          <br style="margin-bottom:4px;">
+          <select id="chbranch-${s.id}" style="padding:4px;">
+            <option value="">-- शाखा निवडा --</option>
+            ${(branches||[]).map(b => `<option value="${b.id}" ${b.id===s.branch_id?'selected':''}>${b.name}</option>`).join('')}
+          </select>
+          <button class="btn gold small" onclick="changeStaffBranch('${s.id}')">शाखा बदला</button>
+        </td>
+      </tr>`).join('');
     const rows = (reqs||[]).map(r => `
       <tr>
         <td>${new Date(r.requested_at).toLocaleString('en-IN')}</td>
@@ -4091,16 +4122,30 @@ async function renderStaffManage(c){
         <td>${r.mobile||''}</td>
         <td>${r.email}</td>
         <td>${statusLabel(r.status)}</td>
-        <td>${r.status==='pending' ? `
+        <td>
+          ${r.status==='pending' ? `
           <select id="role-${r.id}" style="padding:4px;">${roleOpts || '<option value="">-- आधी भूमिका जोडा --</option>'}</select>
           <select id="branch-${r.id}" style="padding:4px;">${branchOpts}</select>
           <button class="btn gold small" onclick="approveStaffSignup('${r.id}')">मंजूर करा</button>
           <button class="btn ghost small" onclick="rejectStaffSignup('${r.id}')">नाकारा</button>
-        ` : ''}</td>
+          ` : ''}
+          <button class="btn ghost small" onclick="editStaffSignupRequest('${r.id}')">✏️ एडिट</button>
+          <button class="btn ghost small" onclick="deleteStaffSignupRequest('${r.id}')" style="color:#b23b3b;">🗑️ डिलीट</button>
+        </td>
       </tr>`).join('');
     c.innerHTML = `
       <div class="panel">
-        <h3>स्टाफ व्यवस्थापन — नवीन नोंदणी विनंत्या</h3>
+        <h3>स्टाफ व्यवस्थापन — सध्याचे कर्मचारी</h3>
+        <p style="color:#777;font-size:12.5px;">एखाद्या कर्मचाऱ्याला दुसऱ्या शाखेत बदली करायची असेल तर इथून नवीन शाखा निवडून "शाखा बदला" दाबा.</p>
+        <div class="table-scroll">
+          <table class="data-table">
+            <thead><tr><th>नाव</th><th>भूमिका</th><th>सध्याची शाखा</th><th>स्थिती</th><th>कृती</th></tr></thead>
+            <tbody>${staffRows || '<tr><td colspan="5" class="empty">अजून कुठलाही स्टाफ मंजूर झालेला नाही.</td></tr>'}</tbody>
+          </table>
+        </div>
+      </div>
+      <div class="panel" style="margin-top:14px;">
+        <h3>नवीन नोंदणी विनंत्या</h3>
         <p style="color:#777;font-size:12.5px;">नवीन कर्मचाऱ्याने स्वतः लॉगिन स्क्रीनवरून नोंदणी केल्यावर इथे दिसेल — भूमिका व शाखा निवडून "मंजूर करा" दाबा, मगच त्याचं लॉगिन काम करेल.</p>
         <div style="margin-bottom:14px;background:#f7f5ee;padding:10px;border-radius:8px;">
           <b style="font-size:12.5px;">भूमिका (Roles) व्यवस्थापन:</b><br>
@@ -4117,6 +4162,100 @@ async function renderStaffManage(c){
       </div>
     `;
   } catch(e){ c.innerHTML = errBanner('त्रुटी: ' + e.message); }
+}
+async function changeStaffRole(staffId){
+  const sel = document.getElementById('chrole-' + staffId);
+  if (!sel || !sel.value){ alert('आधी भूमिका निवडा.'); return; }
+  const { error } = await sbClient.from('staff').update({ role_id: sel.value }).eq('id', staffId);
+  if (error){ alert('भूमिका बदलता आली नाही: ' + error.message); return; }
+  renderStaffManage(document.getElementById('content'));
+}
+async function changeStaffBranch(staffId){
+  const sel = document.getElementById('chbranch-' + staffId);
+  if (!sel || !sel.value){ alert('आधी शाखा निवडा.'); return; }
+  const { error } = await sbClient.from('staff').update({ branch_id: sel.value }).eq('id', staffId);
+  if (error){ alert('शाखा बदलता आली नाही: ' + error.message); return; }
+  renderStaffManage(document.getElementById('content'));
+}
+const VIEW_CATALOG = [
+  {key:'members', label:'सभासद'},
+  {key:'savings', label:'बचत खाती'},
+  {key:'fd', label:'मुदत ठेव (FD/RD)'},
+  {key:'loans', label:'कर्ज खाती'},
+  {key:'pigmy', label:'पिग्मी'},
+  {key:'daybook', label:'व्यवहार / Day Book'},
+  {key:'reports', label:'रिपोर्ट्स'},
+  {key:'import', label:'इम्पोर्ट'},
+  {key:'fraud', label:'ऑडिट सूचना'},
+  {key:'risk', label:'जोखीम विश्लेषण'},
+  {key:'analytics', label:'Analytics'},
+  {key:'notifications', label:'सूचना'},
+  {key:'cleanup', label:'साफसफाई'},
+  {key:'dataquality', label:'डेटा गुणवत्ता'},
+  {key:'cashdeposit', label:'कॅश डिपॉझिट पडताळणी'},
+  {key:'cashdepositreport', label:'कॅश डिपॉझिट रिपोर्ट'},
+  {key:'loanapps', label:'कर्ज अर्ज'},
+  {key:'grievances', label:'तक्रारी'},
+  {key:'standing', label:'स्थायी सूचना'},
+  {key:'chequebook', label:'चेकबुक विनंत्या'},
+];
+async function renderRolePermissions(c){
+  if (!CURRENT_STAFF || CURRENT_STAFF.role !== 'admin'){
+    c.innerHTML = errBanner('ही सुविधा फक्त Admin साठी आहे.');
+    return;
+  }
+  c.innerHTML = '<div class="empty">लोड होत आहे...</div>';
+  try {
+    const { data: roles, error } = await sbClient.from('staff_roles').select('id,name').order('name');
+    if (error) throw error;
+    if (!roles || !roles.length){
+      c.innerHTML = '<div class="panel"><h3>भूमिका परवानग्या</h3><div class="empty">आधी "स्टाफ व्यवस्थापन" मध्ये जाऊन एखादी भूमिका (उदा. cashier) तयार करा.</div></div>';
+      return;
+    }
+    const roleOpts = roles.map(r => `<option value="${r.id}">${r.name}</option>`).join('');
+    c.innerHTML = `
+      <div class="panel">
+        <h3>भूमिका परवानग्या</h3>
+        <p style="color:#777;font-size:12.5px;">प्रत्येक भूमिकेला (उदा. Cashier) कुठले विभाग दिसावेत ते इथे ठरवा. "डॅशबोर्ड" आणि "सेटिंग्ज" हे सगळ्यांना नेहमी दिसतात. <b>Admin ला नेहमी सगळं दिसतं</b> (इथे वेगळं ठरवायची गरज नाही). नवीन भूमिका तयार केल्यावर, ती स्टाफला नेमण्याआधी इथे तिच्यासाठी योग्य विभाग निवडा — नाहीतर त्या भूमिकेच्या स्टाफला डॅशबोर्ड/सेटिंग्जशिवाय काहीच दिसणार नाही.</p>
+        <div style="margin-bottom:14px;">
+          <label style="font-size:12.5px;">भूमिका निवडा:</label>
+          <select id="rp-role-select" style="padding:6px;border:1px solid #ccc;border-radius:6px;" onchange="loadRolePermissionCheckboxes()">${roleOpts}</select>
+        </div>
+        <div id="rp-checkbox-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:6px;margin-bottom:14px;"></div>
+        <button class="btn gold small" onclick="saveRolePermissions()">जतन करा</button>
+        <div id="rp-status" style="margin-top:10px;"></div>
+      </div>
+    `;
+    await loadRolePermissionCheckboxes();
+  } catch(e){ c.innerHTML = errBanner('त्रुटी: ' + e.message); }
+}
+async function loadRolePermissionCheckboxes(){
+  const roleId = document.getElementById('rp-role-select').value;
+  const listEl = document.getElementById('rp-checkbox-list');
+  listEl.innerHTML = '<div class="empty">लोड होत आहे...</div>';
+  const { data, error } = await sbClient.from('role_permissions').select('view_key').eq('role_id', roleId);
+  if (error){ listEl.innerHTML = errBanner('त्रुटी: ' + error.message); return; }
+  const allowed = new Set((data||[]).map(r => r.view_key));
+  listEl.innerHTML = VIEW_CATALOG.map(v => `
+    <label style="font-size:12.5px;display:flex;align-items:center;gap:6px;">
+      <input type="checkbox" class="rp-check" value="${v.key}" ${allowed.has(v.key) ? 'checked' : ''}> ${v.label}
+    </label>
+  `).join('');
+}
+async function saveRolePermissions(){
+  const roleId = document.getElementById('rp-role-select').value;
+  const statusEl = document.getElementById('rp-status');
+  const checked = Array.from(document.querySelectorAll('.rp-check:checked')).map(el => el.value);
+  statusEl.textContent = 'जतन करत आहे...';
+  try {
+    const { error: delErr } = await sbClient.from('role_permissions').delete().eq('role_id', roleId);
+    if (delErr) throw delErr;
+    if (checked.length){
+      const { error: insErr } = await sbClient.from('role_permissions').insert(checked.map(k => ({ role_id: roleId, view_key: k })));
+      if (insErr) throw insErr;
+    }
+    statusEl.innerHTML = '<div class="banner ok">✓ जतन झालं.</div>';
+  } catch(e){ statusEl.innerHTML = errBanner('त्रुटी: ' + e.message); }
 }
 async function addStaffRole(){
   const inp = document.getElementById('new-role-name');
@@ -4146,6 +4285,44 @@ async function approveStaffSignup(id){
 async function rejectStaffSignup(id){
   if (!confirm('ही नोंदणी नाकारायची आहे का?')) return;
   await sbClient.from('staff_signup_requests').update({ status:'rejected', reviewed_at: new Date().toISOString() }).eq('id', id);
+  renderStaffManage(document.getElementById('content'));
+}
+async function editStaffSignupRequest(id){
+  const { data: req, error } = await sbClient.from('staff_signup_requests').select('*').eq('id', id).single();
+  if (error || !req){ alert('विनंती सापडली नाही.'); return; }
+  const name = prompt('नाव:', req.name);
+  if (name === null) return;
+  const mobile = prompt('मोबाईल नंबर:', req.mobile || '');
+  if (mobile === null) return;
+  const email = prompt('ईमेल (टीप: हे फक्त नोंदीतलं ईमेल बदलतं, प्रत्यक्ष लॉगिन ईमेल नाही):', req.email);
+  if (email === null) return;
+  if (!name.trim() || !mobile.trim() || !email.trim()){ alert('सगळी माहिती भरा.'); return; }
+  const { error: updErr } = await sbClient.from('staff_signup_requests')
+    .update({ name: name.trim(), mobile: mobile.trim(), email: email.trim() })
+    .eq('id', id);
+  if (updErr){ alert('अपडेट करता आलं नाही: ' + updErr.message); return; }
+  renderStaffManage(document.getElementById('content'));
+}
+async function deleteStaffSignupRequest(id){
+  const { data: req, error: reqErr } = await sbClient.from('staff_signup_requests').select('*').eq('id', id).single();
+  if (reqErr || !req){ alert('विनंती सापडली नाही.'); return; }
+  if (req.status === 'approved'){
+    const { data: staffRow } = await sbClient.from('staff').select('id').eq('auth_user_id', req.auth_user_id).maybeSingle();
+    if (staffRow){
+      const { count } = await sbClient.from('cash_deposit_audit_log').select('id', { count: 'exact', head: true }).eq('actor_id', staffRow.id);
+      if (count && count > 0){
+        alert('या कर्मचाऱ्याने आधीच व्यवहार/कृती केलेली आहे — त्यामुळे ही नोंदणी डिलीट करता येणार नाही.');
+        return;
+      }
+      if (!confirm('या कर्मचाऱ्याचं स्टाफ खातं (लॉगिन) अजून कुठलाही व्यवहार झालेला नाही — तेही पूर्णपणे काढून टाकलं जाईल. पुढे जायचं का?')) return;
+      const { error: staffDelErr } = await sbClient.from('staff').delete().eq('id', staffRow.id);
+      if (staffDelErr){ alert('स्टाफ खातं काढता आलं नाही: ' + staffDelErr.message); return; }
+    }
+  } else {
+    if (!confirm('ही नोंदणी विनंती कायमची काढायची आहे का?')) return;
+  }
+  const { error: delErr } = await sbClient.from('staff_signup_requests').delete().eq('id', id);
+  if (delErr){ alert('डिलीट करता आलं नाही: ' + delErr.message); return; }
   renderStaffManage(document.getElementById('content'));
 }
 async function renderAuditLog(c){
@@ -4807,11 +4984,11 @@ async function fetchStaffProfile(authUserId){
   try {
     const { data, error } = await sbClient
       .from('staff')
-      .select('id,name,branch_id,is_active,staff_roles(name)')
+      .select('id,name,branch_id,role_id,is_active,staff_roles(name)')
       .eq('auth_user_id', authUserId)
       .maybeSingle();
     if (error || !data) return null;
-    return { id:data.id, name:data.name, role: data.staff_roles?.name || null, branch_id:data.branch_id, is_active:data.is_active };
+    return { id:data.id, name:data.name, role: data.staff_roles?.name || null, role_id:data.role_id, branch_id:data.branch_id, is_active:data.is_active };
   } catch(e){ return null; }
 }
 
@@ -4824,6 +5001,8 @@ function renderStaffBadge(){
   if (auditNav) auditNav.style.display = (CURRENT_STAFF.role === 'admin') ? '' : 'none';
   const staffNav = document.getElementById('nav-staffmanage');
   if (staffNav) staffNav.style.display = (CURRENT_STAFF.role === 'admin') ? '' : 'none';
+  const rolePermNav = document.getElementById('nav-rolepermissions');
+  if (rolePermNav) rolePermNav.style.display = (CURRENT_STAFF.role === 'admin') ? '' : 'none';
 }
 
 async function doLogout(){
@@ -4861,13 +5040,13 @@ async function handleLoginSubmit(ev){
     if (error) { errEl.textContent = 'लॉगिन अयशस्वी: चुकीचा ईमेल/पासवर्ड.'; return; }
 
     PENDING_LOGIN_EMAIL = email;
-    // पासवर्ड बरोबर असला तरी दुसरा टप्पा (2FA) नेहमी आवश्यक — Authenticator सेट-अप असेल तर तो, नसेल तर ई-मेल OTP
+    // Authenticator सेट-अप असेल तर तो अनिवार्य; नसेल तर थेट आत (ई-मेल OTP पर्याय काढला आहे)
     const { data: factors } = await sbClient.auth.mfa.listFactors();
     const totpFactor = (factors?.totp || []).find(f => f.status === 'verified');
     if (totpFactor){
       showMfaChallengeForm(totpFactor);
     } else {
-      showEmailOtpForm(email, null);
+      await completeLoginAfterAuth();
     }
   } catch(e){
     errEl.textContent = 'अनपेक्षित एरर: ' + e.message;
@@ -4876,44 +5055,13 @@ async function handleLoginSubmit(ev){
   }
 }
 
-function showEmailOtpForm(email, totpFactorForSwitchBack){
-  document.getElementById('login-form').innerHTML = `
-    <label>ई-मेलवर पाठवलेला ६-अंकी कोड</label>
-    <input type="text" id="email-otp-code" maxlength="6" autocomplete="one-time-code" required>
-    <button type="submit" id="login-btn">पडताळा</button>
-    <button type="button" id="resend-email-otp-btn" style="margin-top:6px;background:none;border:none;color:#1B2A4A;text-decoration:underline;cursor:pointer;font-size:12px;padding:4px 0;">पुन्हा कोड पाठवा</button>
-    ${totpFactorForSwitchBack ? `<button type="button" id="use-totp-btn" style="margin-top:6px;background:none;border:none;color:#1B2A4A;text-decoration:underline;cursor:pointer;font-size:12px;padding:4px 0;">किंवा Authenticator कोड वापरा</button>` : ''}
-    <div class="login-err" id="login-err"></div>
-    <div style="font-size:11px;color:#777;margin-top:6px;" id="otp-sent-msg">कोड पाठवत आहे...</div>
-  `;
-  const sendEmailOtp = async () => {
-    const msgEl = document.getElementById('otp-sent-msg');
-    if (msgEl) msgEl.textContent = 'कोड पाठवत आहे...';
-    const { error } = await sbClient.auth.signInWithOtp({ email, options: { shouldCreateUser: false } });
-    if (msgEl) msgEl.textContent = error ? ('कोड पाठवता आला नाही: ' + error.message) : `${email} या ई-मेलवर ६-अंकी कोड पाठवला आहे.`;
-  };
-  sendEmailOtp();
-  document.getElementById('resend-email-otp-btn').onclick = sendEmailOtp;
-  document.getElementById('login-form').onsubmit = async (ev) => {
-    ev.preventDefault();
-    const errEl = document.getElementById('login-err');
-    const code = document.getElementById('email-otp-code').value.trim();
-    if (!code || code.length !== 6){ errEl.textContent = '६-अंकी कोड बरोबर टाका.'; return; }
-    const { error: verifyErr } = await sbClient.auth.verifyOtp({ email, token: code, type: 'email' });
-    if (verifyErr){ errEl.textContent = 'चूक: ' + verifyErr.message; return; }
-    await completeLoginAfterAuth();
-  };
-  if (totpFactorForSwitchBack){
-    document.getElementById('use-totp-btn').onclick = () => showMfaChallengeForm(totpFactorForSwitchBack);
-  }
-}
+
 
 function showMfaChallengeForm(factor){
   document.getElementById('login-form').innerHTML = `
     <label>Authenticator ॲपमधला ६-अंकी कोड</label>
     <input type="text" id="mfa-code" maxlength="6" autocomplete="one-time-code" required>
     <button type="submit" id="login-btn">पडताळा</button>
-    <button type="button" id="use-email-btn" style="margin-top:6px;background:none;border:none;color:#1B2A4A;text-decoration:underline;cursor:pointer;font-size:12px;padding:4px 0;">किंवा ई-मेलवर कोड पाठवा</button>
     <div class="login-err" id="login-err"></div>
   `;
   document.getElementById('login-form').onsubmit = async (ev) => {
@@ -4929,7 +5077,6 @@ function showMfaChallengeForm(factor){
       await completeLoginAfterAuth();
     } catch(e){ errEl.textContent = 'चूक: ' + e.message; }
   };
-  document.getElementById('use-email-btn').onclick = () => showEmailOtpForm(PENDING_LOGIN_EMAIL, factor);
 }
 
 async function completeLoginAfterAuth(){
@@ -4954,9 +5101,26 @@ async function completeLoginAfterAuth(){
 }
 
 /* init */
-(async function init(){
-  await initSupabase();
-  document.getElementById('login-form').onsubmit = handleLoginSubmit;
+let ALLOWED_VIEWS = null; // null = सगळं परवानगी आहे (Admin); अन्यथा परवानगी असलेल्या view-keys चा Set
+async function loadAllowedViews(){
+  if (!CURRENT_STAFF){ ALLOWED_VIEWS = new Set(); return; }
+  if (CURRENT_STAFF.role === 'admin'){ ALLOWED_VIEWS = null; return; }
+  const set = new Set(['dashboard','settings']); // हे दोन नेहमी सगळ्यांना दिसतात
+  if (CURRENT_STAFF.role_id){
+    const { data } = await sbClient.from('role_permissions').select('view_key').eq('role_id', CURRENT_STAFF.role_id);
+    (data||[]).forEach(r => set.add(r.view_key));
+  }
+  ALLOWED_VIEWS = set;
+}
+function applyNavPermissions(){
+  document.querySelectorAll('#nav a[data-view]').forEach(a => {
+    const v = a.dataset.view;
+    if (['auditlog','staffmanage','rolepermissions'].includes(v)) return; // हे वेगळ्याने (फक्त Admin) हाताळलेले आहेत
+    if (ALLOWED_VIEWS === null){ a.style.display = ''; return; } // Admin — सगळं दिसतं
+    a.style.display = ALLOWED_VIEWS.has(v) ? '' : 'none';
+  });
+}
+async function resolveSessionAndRender(){
   if (!sbClient){ showLoginScreen(); return; } // Supabase जोडणीच झाली नाही तर लॉगिनही शक्य नाही
   try {
     const { data: { session } } = await sbClient.auth.getSession();
@@ -4971,11 +5135,12 @@ async function completeLoginAfterAuth(){
           const totpFactor = (factors?.totp || []).find(f => f.status === 'verified');
           showLoginScreen();
           if (totpFactor) showMfaChallengeForm(totpFactor);
-          else showEmailOtpForm(session.user.email, null);
           return;
         }
         CURRENT_STAFF = profile;
         renderStaffBadge();
+        await loadAllowedViews();
+        applyNavPermissions();
         hideLoginScreen();
         resetIdleTimer();
         render('dashboard');
@@ -4984,6 +5149,20 @@ async function completeLoginAfterAuth(){
     }
   } catch(e){ /* सेशन तपासताना एरर आली तरी लॉगिन स्क्रीनवरच थांबवायचं */ }
   showLoginScreen();
+}
+
+(async function init(){
+  await initSupabase();
+  document.getElementById('login-form').onsubmit = handleLoginSubmit;
+  if (sbClient){
+    sbClient.auth.onAuthStateChange((event, session) => {
+      // ई-मेलमधली लिंक दाबल्यावर (त्याच टॅबमध्ये session आपोआप तयार झाल्यावर) लगेच पुढे न्या
+      if (event === 'SIGNED_IN' && session){
+        resolveSessionAndRender();
+      }
+    });
+  }
+  await resolveSessionAndRender();
 })();
 </script>
 </body>
