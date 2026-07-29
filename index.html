@@ -327,6 +327,7 @@ function showStaffSignupForm(){
       <a data-view="auditlog" id="nav-auditlog" style="display:none;"><span class="ic">📜</span> ऑडिट लॉग</a>
       <a data-view="staffmanage" id="nav-staffmanage" style="display:none;"><span class="ic">🧑‍💼</span> स्टाफ व्यवस्थापन</a>
       <a data-view="rolepermissions" id="nav-rolepermissions" style="display:none;"><span class="ic">🔐</span> भूमिका परवानग्या</a>
+      <a data-view="pendingapprovals" id="nav-pendingapprovals" style="display:none;"><span class="ic">✅</span> प्रलंबित मंजुरी</a>
       <a data-view="loanapps"><span class="ic">📝</span> कर्ज अर्ज</a>
       <a data-view="grievances"><span class="ic">💬</span> तक्रारी</a>
       <a data-view="standing"><span class="ic">🔁</span> स्थायी सूचना</a>
@@ -617,12 +618,16 @@ async function loadRefData(){
 async function render(view, param){
   const c = document.getElementById('content');
   if (typeof stopCcQrScanner === 'function') stopCcQrScanner();
-  if (ALLOWED_VIEWS !== null && !ALLOWED_VIEWS.has(view) && !['auditlog','staffmanage','rolepermissions'].includes(view)){
+  if (ALLOWED_VIEWS !== null && !ALLOWED_VIEWS.has(view) && !['auditlog','staffmanage','rolepermissions','pendingapprovals'].includes(view)){
     c.innerHTML = errBanner('⛔ या विभागात प्रवेश करण्याची परवानगी तुमच्या भूमिकेला नाही.');
     return;
   }
   if ((view === 'auditlog' || view === 'staffmanage' || view === 'rolepermissions') && (!CURRENT_STAFF || CURRENT_STAFF.role !== 'admin')){
     c.innerHTML = errBanner('⛔ ही सुविधा फक्त Admin साठी आहे.');
+    return;
+  }
+  if (view === 'pendingapprovals' && (!CURRENT_STAFF || !['admin','operator'].includes(CURRENT_STAFF.role))){
+    c.innerHTML = errBanner('⛔ ही सुविधा फक्त Admin/Operator साठी आहे.');
     return;
   }
   c.innerHTML = '<div class="empty">लोड होत आहे...</div>';
@@ -642,6 +647,7 @@ async function render(view, param){
   if (view === 'auditlog') return renderAuditLog(c);
   if (view === 'staffmanage') return renderStaffManage(c);
   if (view === 'rolepermissions') return renderRolePermissions(c);
+  if (view === 'pendingapprovals') return renderPendingApprovals(c);
   if (view === 'loanapps') return renderLoanApplications(c);
   if (view === 'grievances') return renderGrievancesAdmin(c);
   if (view === 'standing') return renderStandingInstructionsAdmin(c);
@@ -714,20 +720,22 @@ async function renderDashboard(c){
     c.innerHTML = dashboardHtml(2, 2, 265000, 0, 0, 0) + connWarningBanner();
     return;
   }
+  const safe = async (fn, fallback) => { try { return await fn(); } catch(e){ console.error(e); return fallback; } };
   try {
-    const [{count:memberCount}, {count:accountCount}] = await Promise.all([
-      sbClient.from('members').select('id',{count:'exact',head:true}),
-      sbClient.from('accounts').select('id',{count:'exact',head:true}),
-    ]);
-    const {count:loanCount} = await sbClient.from('accounts').select('id',{count:'exact',head:true}).eq('product_type','loan');
-    const totalBal = await fetchAllActiveBalanceSum();
+    const memberCount = await safe(async () => (await sbClient.from('members').select('id',{count:'exact',head:true})).count || 0, 0);
+    const accountCount = await safe(async () => (await sbClient.from('accounts').select('id',{count:'exact',head:true})).count || 0, 0);
+    const loanCount = await safe(async () => (await sbClient.from('accounts').select('id',{count:'exact',head:true}).eq('product_type','loan')).count || 0, 0);
+    const totalBal = await safe(() => fetchAllActiveBalanceSum(), null);
     const todayStart = new Date(); todayStart.setHours(0,0,0,0);
-    const [{count:pendingCdCount}, {data:todayCdRows}] = await Promise.all([
-      sbClient.from('cash_deposit_requests').select('id',{count:'exact',head:true}).eq('status','pending'),
-      sbClient.from('cash_deposit_requests').select('amount').eq('status','verified').gte('created_at', todayStart.toISOString())
-    ]);
-    const todayCdTotal = (todayCdRows||[]).reduce((s,r)=>s+Number(r.amount||0),0);
-    c.innerHTML = dashboardHtml(memberCount||0, accountCount||0, totalBal, loanCount||0, pendingCdCount||0, todayCdTotal);
+    const pendingCdCount = await safe(async () => (await sbClient.from('cash_deposit_requests').select('id',{count:'exact',head:true}).eq('status','pending')).count || 0, 0);
+    const todayCdTotal = await safe(async () => {
+      const { data } = await sbClient.from('cash_deposit_requests').select('amount').eq('status','verified').gte('created_at', todayStart.toISOString());
+      return (data||[]).reduce((s,r)=>s+Number(r.amount||0),0);
+    }, 0);
+    c.innerHTML = dashboardHtml(memberCount, accountCount, totalBal, loanCount, pendingCdCount, todayCdTotal);
+    if (totalBal === null){
+      c.innerHTML += errBanner('⚠ "एकूण शिल्लक" आत्ता आणता आली नाही (डेटाबेस timeout) — बाकी आकडे बरोबर आहेत. काही वेळाने पुन्हा प्रयत्न करा.');
+    }
   } catch(e){
     c.innerHTML = errBanner('डॅशबोर्ड डेटा आणताना त्रुटी: ' + e.message);
   }
@@ -737,7 +745,7 @@ function dashboardHtml(memberCount, accountCount, totalBal, loanCount, pendingCd
     <div class="stat-row">
       <div class="stat"><div class="num">${memberCount}</div><div class="lbl">एकूण सभासद</div></div>
       <div class="stat"><div class="num">${accountCount}</div><div class="lbl">एकूण खाती</div></div>
-      <div class="stat"><div class="num">${fmtMoney(totalBal)}</div><div class="lbl">एकूण शिल्लक (सक्रिय)</div></div>
+      <div class="stat"><div class="num">${totalBal===null ? '—' : fmtMoney(totalBal)}</div><div class="lbl">एकूण शिल्लक (सक्रिय)</div></div>
       <div class="stat"><div class="num">${loanCount}</div><div class="lbl">कर्ज खाती</div></div>
     </div>
     <div class="stat-row">
@@ -3723,15 +3731,28 @@ async function renderStandingInstructionsAdmin(c){
 }
 
 async function executeStandingInstruction(siId, fromAccountId, toAccountNo, amount){
-  if (!confirm(`खरंच ₹${amount} ट्रान्सफर करायचे आहे का (${toAccountNo} कडे)?`)) return;
+  if (!confirm(`ही सूचना मंजुरीसाठी (दुसऱ्या अधिकृत स्टाफकडे) पाठवायची आहे का — ₹${amount} (${toAccountNo} कडे)?`)) return;
   const statusEl = document.getElementById('si-admin-status');
-  // हेच सुरक्षित member_transfer_funds RPC वापरतो — पण ते सभासद-सेशनसाठी बनवलेलं आहे,
-  // त्यामुळे इथे स्टाफकडून थेट accounts अपडेट + transactions नोंद करतो
   try {
+    const { error } = await sbClient.from('pending_approvals').insert({
+      action_type: 'standing_instruction_execute',
+      payload: { siId, fromAccountId, toAccountNo, amount },
+      description: `स्थायी सूचना कार्यान्वित — ₹${amount} → ${toAccountNo}`,
+      created_by: CURRENT_STAFF?.id || null,
+      created_by_name: CURRENT_STAFF?.name || null
+    });
+    if (error) throw error;
+    statusEl.innerHTML = `<div class="banner ok">✓ मंजुरीसाठी पाठवलं — दुसऱ्या अधिकृत स्टाफने "प्रलंबित मंजुरी" मधून पास केल्यावरच प्रत्यक्ष व्यवहार होईल.</div>`;
+  } catch(e){ statusEl.innerHTML = errBanner('त्रुटी: ' + e.message); }
+}
+
+async function executeApprovedAction(actionType, payload){
+  if (actionType === 'standing_instruction_execute'){
+    const { siId, fromAccountId, toAccountNo, amount } = payload;
     const { data: fromAcc } = await sbClient.from('accounts').select('current_balance').eq('id', fromAccountId).single();
     const { data: toAcc } = await sbClient.from('accounts').select('id,current_balance').eq('account_no', toAccountNo).single();
-    if (!toAcc){ statusEl.innerHTML = errBanner('प्राप्तकर्त्याचं खातं सापडलं नाही.'); return; }
-    if (Number(fromAcc.current_balance) < amount){ statusEl.innerHTML = errBanner('अपुरी शिल्लक.'); return; }
+    if (!toAcc) throw new Error('प्राप्तकर्त्याचं खातं सापडलं नाही.');
+    if (Number(fromAcc.current_balance) < amount) throw new Error('अपुरी शिल्लक.');
     const newFrom = Number(fromAcc.current_balance) - amount;
     const newTo = Number(toAcc.current_balance) + amount;
     await sbClient.from('accounts').update({ current_balance: newFrom }).eq('id', fromAccountId);
@@ -3741,9 +3762,67 @@ async function executeStandingInstruction(siId, fromAccountId, toAccountNo, amou
       { account_id: toAcc.id, txn_date: todayStr(), cd_flag:'C', amount, balance_after:newTo, narration:'स्थायी सूचना ← ' },
     ]);
     await sbClient.from('standing_instructions').update({ last_executed: todayStr() }).eq('id', siId);
-    statusEl.innerHTML = `<div class="banner ok">✓ यशस्वीरित्या कार्यान्वित झालं.</div>`;
-    setTimeout(() => render('standing'), 1200);
-  } catch(e){ statusEl.innerHTML = errBanner('त्रुटी: ' + e.message); }
+    return;
+  }
+  throw new Error('अनोळखी कृती प्रकार: ' + actionType);
+}
+
+async function renderPendingApprovals(c){
+  if (!CURRENT_STAFF || !['admin','operator'].includes(CURRENT_STAFF.role)){
+    c.innerHTML = errBanner('ही सुविधा फक्त Admin/Operator साठी आहे.');
+    return;
+  }
+  c.innerHTML = '<div class="empty">लोड होत आहे...</div>';
+  try {
+    const { data: items, error } = await sbClient.from('pending_approvals')
+      .select('*').eq('status','pending').order('created_at', { ascending: false });
+    if (error) throw error;
+    const rows = (items||[]).map(a => `
+      <tr>
+        <td>${new Date(a.created_at).toLocaleString('en-IN')}</td>
+        <td>${a.description || a.action_type}</td>
+        <td>${a.created_by_name || '-'}</td>
+        <td>
+          ${CURRENT_STAFF.id === a.created_by ?
+            '<span style="color:#999;font-size:11.5px;">स्वतः तयार केलेलं — स्वतः मंजूर करता येणार नाही</span>' :
+            `<button class="btn gold small" onclick="approvePendingAction('${a.id}')">✅ पास करा</button>
+             <button class="btn ghost small" onclick="rejectPendingAction('${a.id}')">🚫 नाकारा</button>`
+          }
+        </td>
+      </tr>`).join('');
+    c.innerHTML = `
+      <div class="panel">
+        <h3>प्रलंबित मंजुरी (Passing)</h3>
+        <p style="color:#777;font-size:12.5px;">इथे दिसणाऱ्या कृती दुसऱ्या स्टाफने तयार केलेल्या आहेत — पडताळून "पास करा" किंवा "नाकारा" दाबा. जो स्वतः तयार करतो, तोच स्वतः पास करू शकत नाही.</p>
+        <div class="table-scroll">
+          <table class="data-table">
+            <thead><tr><th>वेळ</th><th>तपशील</th><th>कोणी तयार केलं</th><th>कृती</th></tr></thead>
+            <tbody>${rows || '<tr><td colspan="4" class="empty">कुठलीही प्रलंबित मंजुरी नाही.</td></tr>'}</tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  } catch(e){ c.innerHTML = errBanner('त्रुटी: ' + e.message); }
+}
+async function approvePendingAction(id){
+  const { data: a, error } = await sbClient.from('pending_approvals').select('*').eq('id', id).single();
+  if (error || !a){ alert('विनंती सापडली नाही.'); return; }
+  if (a.created_by === CURRENT_STAFF.id){ alert('स्वतः तयार केलेली कृती स्वतः मंजूर करता येणार नाही.'); return; }
+  if (!confirm('ही कृती पास करून प्रत्यक्ष व्यवहार पूर्ण करायचा आहे का?')) return;
+  try {
+    await executeApprovedAction(a.action_type, a.payload);
+    await sbClient.from('pending_approvals').update({
+      status: 'approved', approved_by: CURRENT_STAFF.id, approved_by_name: CURRENT_STAFF.name, approved_at: new Date().toISOString()
+    }).eq('id', id);
+    renderPendingApprovals(document.getElementById('content'));
+  } catch(e){ alert('कृती पूर्ण करता आली नाही: ' + e.message); }
+}
+async function rejectPendingAction(id){
+  if (!confirm('ही विनंती नाकारायची आहे का?')) return;
+  await sbClient.from('pending_approvals').update({
+    status: 'rejected', approved_by: CURRENT_STAFF.id, approved_by_name: CURRENT_STAFF.name, approved_at: new Date().toISOString()
+  }).eq('id', id);
+  renderPendingApprovals(document.getElementById('content'));
 }
 
 async function renderGrievancesAdmin(c, filterStatus){
@@ -5003,6 +5082,8 @@ function renderStaffBadge(){
   if (staffNav) staffNav.style.display = (CURRENT_STAFF.role === 'admin') ? '' : 'none';
   const rolePermNav = document.getElementById('nav-rolepermissions');
   if (rolePermNav) rolePermNav.style.display = (CURRENT_STAFF.role === 'admin') ? '' : 'none';
+  const pendingApprovalsNav = document.getElementById('nav-pendingapprovals');
+  if (pendingApprovalsNav) pendingApprovalsNav.style.display = ['admin','operator'].includes(CURRENT_STAFF.role) ? '' : 'none';
 }
 
 async function doLogout(){
@@ -5115,7 +5196,7 @@ async function loadAllowedViews(){
 function applyNavPermissions(){
   document.querySelectorAll('#nav a[data-view]').forEach(a => {
     const v = a.dataset.view;
-    if (['auditlog','staffmanage','rolepermissions'].includes(v)) return; // हे वेगळ्याने (फक्त Admin) हाताळलेले आहेत
+    if (['auditlog','staffmanage','rolepermissions','pendingapprovals'].includes(v)) return; // हे वेगळ्याने हाताळलेले आहेत
     if (ALLOWED_VIEWS === null){ a.style.display = ''; return; } // Admin — सगळं दिसतं
     a.style.display = ALLOWED_VIEWS.has(v) ? '' : 'none';
   });
