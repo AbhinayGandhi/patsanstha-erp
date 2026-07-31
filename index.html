@@ -695,7 +695,12 @@ async function renderGlobalSearch(c, query){
 async function fetchAllActiveBalanceSum(){
   const { data, error } = await sbClient.rpc('get_active_balance_sum');
   if (error) throw error;
-  return Number(data || 0);
+  const row = (data && data[0]) || { deposit_total: 0, loan_total: 0, grand_total: 0 };
+  return {
+    deposit: Number(row.deposit_total || 0),
+    loan: Number(row.loan_total || 0),
+    grand: Number(row.grand_total || 0)
+  };
 }
 
 /* सामान्य pagination helper — Reports साठी संपूर्ण टेबल (1000 row limit टाळून) वाचायला */
@@ -745,8 +750,15 @@ function dashboardHtml(memberCount, accountCount, totalBal, loanCount, pendingCd
     <div class="stat-row">
       <div class="stat"><div class="num">${memberCount}</div><div class="lbl">एकूण सभासद</div></div>
       <div class="stat"><div class="num">${accountCount}</div><div class="lbl">एकूण खाती</div></div>
-      <div class="stat"><div class="num">${totalBal===null ? '—' : fmtMoney(totalBal)}</div><div class="lbl">एकूण शिल्लक (सक्रिय)</div></div>
+      ${totalBal===null ? `
+      <div class="stat"><div class="num">—</div><div class="lbl">एकूण ठेव शिल्लक</div></div>
+      <div class="stat"><div class="num">—</div><div class="lbl">एकूण कर्ज थकबाकी</div></div>
+      ` : `
+      <div class="stat"><div class="num">${fmtMoney(totalBal.deposit)}</div><div class="lbl">एकूण ठेव शिल्लक</div></div>
+      <div class="stat"><div class="num">${fmtMoney(totalBal.loan)}</div><div class="lbl">एकूण कर्ज थकबाकी</div></div>
+      `}
       <div class="stat"><div class="num">${loanCount}</div><div class="lbl">कर्ज खाती</div></div>
+      <div class="stat"><div class="num">${totalBal===null ? '—' : fmtMoney(totalBal.grand)}</div><div class="lbl">पतसंस्थेची एकूण उलाढाल</div></div>
     </div>
     <div class="stat-row">
       <div class="stat" style="cursor:pointer;" onclick="render('cashdeposit')"><div class="num">${pendingCdCount}</div><div class="lbl">⏳ प्रलंबित कॅश डिपॉझिट</div></div>
